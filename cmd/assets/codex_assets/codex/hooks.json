@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p \"$(git rev-parse --show-toplevel)/reasoning_audits\" && rm -f \"$(git rev-parse --show-toplevel)/reasoning_audits/.pending_prompt\"",
+            "statusMessage": "Preparing reasoning audit directory"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/reasoning-audit-prompt.sh\"",
+            "statusMessage": "Saving user prompt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/reasoning-audit-stop.sh\"",
+            "statusMessage": "Attaching prompt to audit",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
