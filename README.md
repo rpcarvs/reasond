@@ -1,7 +1,7 @@
 # rdit
 
 `rdit` is a local-first reasoning audit viewer for coding-agent sessions.
-It installs repository-local audit hooks for Codex and Claude Code, indexes the generated markdown logs, runs judge models against them, and exposes the results in a Bubble Tea TUI.
+It installs repository-local audit hooks for Codex and Claude Code, indexes the generated markdown logs, runs judge models against them, and exposes the results in a TUI.
 
 ## Why rdit
 
@@ -32,6 +32,9 @@ Inside the TUI:
 - Use the board to inspect findings, switch providers, and review source files.
 
 If `rdit` is not found after install, add `$(go env GOPATH)/bin` to your `PATH`.
+```bash
+echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc
+```
 
 ## Install behavior
 
@@ -87,11 +90,9 @@ The board defaults to the most recently used provider and shows the latest run p
 `rdit` currently supports two headless judge runners:
 
 - Codex
-  `codex exec --ephemeral --model ... --output-schema ... --output-last-message ...`
 - Claude Code
-  `claude --print --model ... --json-schema ... --no-session-persistence --output-format json`
 
-The TUI lets the user choose the judge provider and model independently of the provider that originally generated the audit markdown.
+The TUI lets the user choose the judge provider and model independently of the provider that originally generated the reasoning logs.
 
 ## Core interactions
 
@@ -119,13 +120,8 @@ Detail and source views:
 - `up/down` or `j/k` scroll
 - `q` close the current view
 
-## Concurrency
-
-Audit judging uses bounded goroutine concurrency for external provider calls.
-SQLite is opened in WAL mode with retry/backoff handling, a busy timeout, and a single connection to keep writes serialized and reduce lock contention.
 
 ## Notes
 
 - Processing is issue-driven, not issue-forcing. A judge can return no problems for a source file.
 - Re-audits are insert-only. Historical runs remain stored and can be surfaced with the all-runs toggle.
-- The state popup summarizes repository health, runtime status, and provider installation integrity.
