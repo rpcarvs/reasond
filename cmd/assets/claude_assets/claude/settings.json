@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/reasoning_audits\" && rm -f \"$CLAUDE_PROJECT_DIR/reasoning_audits/.pending_prompt\""
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/reasoning_logs\" && rm -f \"$CLAUDE_PROJECT_DIR/reasoning_logs/.pending_prompt\""
           }
         ]
       }

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/install"
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/install"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
 // Status describes whether an expected runtime or provider-managed file is present, missing, or drifted.
@@ -28,7 +28,7 @@ type Report struct {
 	Providers map[assetbundle.Provider]ProviderStatus
 }
 
-// RuntimeStatus captures the integrity of the local rdit runtime files.
+// RuntimeStatus captures the integrity of the local reasond runtime files.
 type RuntimeStatus struct {
 	RuntimeDir        ItemStatus
 	Database          ItemStatus
@@ -71,18 +71,6 @@ func (r Report) Healthy() bool {
 	return false
 }
 
-// ProviderNames returns the providers seen in the report in stable order.
-func (r Report) ProviderNames() []assetbundle.Provider {
-	providers := []assetbundle.Provider{assetbundle.ProviderCodex, assetbundle.ProviderClaude}
-	var present []assetbundle.Provider
-	for _, provider := range providers {
-		if _, ok := r.Providers[provider]; ok {
-			present = append(present, provider)
-		}
-	}
-	return present
-}
-
 // Healthy reports whether all expected files for the provider are present and unmodified.
 func (p ProviderStatus) Healthy() bool {
 	if len(p.Files) == 0 {
@@ -111,7 +99,7 @@ func (p ProviderStatus) ModifiedPaths() []string {
 // Checker inspects a repository without mutating it.
 type Checker struct{}
 
-// Check inspects whether rdit has been installed correctly in targetDir.
+// Check inspects whether reasond has been installed correctly in targetDir.
 func (Checker) Check(targetDir string) (Report, error) {
 	rootDir, err := filepath.Abs(targetDir)
 	if err != nil {

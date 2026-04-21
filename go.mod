@@ -1,4 +1,4 @@
-module github.com/rpcarvs/rdit
+module github.com/rpcarvs/reasond
 
 go 1.26.2
 

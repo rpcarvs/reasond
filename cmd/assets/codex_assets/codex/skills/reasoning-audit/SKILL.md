@@ -1,11 +1,11 @@
 ---
 name: reasoning-audit
 description: >
-  Automatically log a faithful summary of Claude's reasoning to a
-  reasoning_audits/ directory at the end of every task. This skill MUST be
+  Automatically log a faithful summary of Codex's reasoning to a
+  reasoning_logs/ directory at the end of every task. This skill MUST be
   followed after completing any user request, before yielding control back to
   the user. It is a mandatory post-task audit step. Use this skill on every
-  single turn where Claude produces a substantive response.
+  single turn where Codex produces a substantive response.
 ---
 
 # Reasoning Audit Skill
@@ -15,14 +15,14 @@ reconstruction of your internal reasoning.
 
 ## Instructions
 
-After you finish responding to the user's request, **always** create an audit
-file in `reasoning_audits/`. Get the filename:
+After you finish responding to the user's request, **always** create a log
+file in `reasoning_logs/`. Get the filename:
 
 ```bash
 date +%s
 ```
 
-Then create `reasoning_audits/<timestamp>.md` with **only** this content:
+Then create `reasoning_logs/<timestamp>.md` with **only** this content:
 
 ```markdown
 # Reasoning

@@ -12,11 +12,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/app"
-	"github.com/rpcarvs/rdit/internal/integrity"
-	"github.com/rpcarvs/rdit/internal/processing"
-	"github.com/rpcarvs/rdit/internal/storage"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/app"
+	"github.com/rpcarvs/reasond/internal/integrity"
+	"github.com/rpcarvs/reasond/internal/processing"
+	"github.com/rpcarvs/reasond/internal/storage"
 )
 
 var providerModels = map[string][]string{
@@ -130,7 +130,7 @@ type startupModalMsg struct {
 	next phase
 }
 
-// Run launches the current rdit Bubble Tea interface.
+// Run launches the current reasond Bubble Tea interface.
 func Run(rootDir string) error {
 	bootstrap, err := app.NewBootstrap(rootDir)
 	if err != nil {
@@ -615,7 +615,7 @@ func (m model) moveSelection(step int) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.err != nil {
-		return "rdit\n\nFailed to inspect repository integrity.\n\n" + m.err.Error() + "\n\nPress q to quit.\n"
+		return "reasond\n\nFailed to inspect repository integrity.\n\n" + m.err.Error() + "\n\nPress q to quit.\n"
 	}
 	if m.phase == phaseSource {
 		return m.renderSourceView()
@@ -630,7 +630,7 @@ func (m model) View() string {
 	case phaseInitSelect:
 		title := "Install provider"
 		if !hasRuntimeAndAuditDir(m.report.RootDir, m.report.Runtime.RuntimeDir.Status) {
-			title = "rdit needs initialization"
+			title = "reasond needs initialization"
 		}
 		return m.overlay(base, m.renderSelectionModal(title, []string{
 			"Codex",
@@ -639,7 +639,7 @@ func (m model) View() string {
 	case phaseInitRunning:
 		return m.overlay(base, m.renderMessageModal(
 			"Running init",
-			[]string{m.initStatus, "Please wait while rdit installs local assets."},
+			[]string{m.initStatus, "Please wait while reasond installs local assets."},
 			"q closes this popup",
 		))
 	case phaseInitResult:
@@ -715,7 +715,7 @@ func (m model) renderBoard() string {
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	lines := []string{
-		titleStyle.Render("rdit - Reasoning Audits"),
+		titleStyle.Render("reasond - Reasoning Audits"),
 		lineStyle.Render(fmt.Sprintf("Repository: %s", m.bootstrap.RootDir)),
 	}
 	if m.pendingCount > 0 {
@@ -1299,10 +1299,7 @@ func (m model) openSourceViewer() (model, tea.Cmd) {
 	if m.detail == nil {
 		return m, nil
 	}
-	path := strings.TrimSpace(m.detail.SourcePath)
-	if path != "" && !filepath.IsAbs(path) {
-		path = filepath.Join(m.bootstrap.RootDir, path)
-	}
+	path := resolveSourcePath(m.bootstrap.RootDir, m.detail.SourcePath)
 	m.sourcePath = path
 	m.sourceScroll = 0
 
@@ -1330,6 +1327,21 @@ func (m model) openSourceViewer() (model, tea.Cmd) {
 	m.sourceLines = lines
 	m.phase = phaseSource
 	return m, nil
+}
+
+func resolveSourcePath(rootDir string, sourcePath string) string {
+	path := strings.TrimSpace(sourcePath)
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+
+	clean := filepath.Clean(filepath.FromSlash(path))
+	logsDir := filepath.Join(rootDir, "reasoning_logs")
+	if clean == "reasoning_logs" || strings.HasPrefix(clean, "reasoning_logs"+string(filepath.Separator)) {
+		return filepath.Join(rootDir, clean)
+	}
+
+	return filepath.Join(logsDir, clean)
 }
 
 func waitForEvent(events <-chan tea.Msg) tea.Cmd {
@@ -1378,7 +1390,7 @@ func (m *model) reloadState() error {
 		if err != nil {
 			return err
 		}
-		if _, err := store.SyncReasoningAudits(); err != nil {
+		if _, err := store.SyncReasoningLogs(); err != nil {
 			_ = store.Close()
 			return err
 		}
@@ -1392,7 +1404,7 @@ func (m *model) reloadState() error {
 		m.store = store
 		m.processor = m.bootstrap.NewProcessor(store)
 		m.pendingCount = pendingCount
-		if provider, ok, err := store.MostRecentProvider(); err != nil {
+		if provider, ok, err := store.PreferredBoardProvider(); err != nil {
 			_ = store.Close()
 			m.store = nil
 			return err
@@ -1409,6 +1421,16 @@ func (m *model) reloadState() error {
 			m.store = nil
 			return err
 		}
+
+		// Refresh integrity after runtime bootstrap because opening the store can
+		// create the SQLite database and change the effective repository state.
+		report, err = m.bootstrap.Inspect()
+		if err != nil {
+			_ = store.Close()
+			m.store = nil
+			return err
+		}
+		m.report = report
 	}
 
 	m.phase = phaseBoard
@@ -1466,7 +1488,7 @@ func hasRuntimeAndAuditDir(rootDir string, runtimeStatus integrity.Status) bool 
 	if runtimeStatus != integrity.StatusPresent {
 		return false
 	}
-	auditDir := filepath.Join(rootDir, "reasoning_audits")
+	auditDir := filepath.Join(rootDir, "reasoning_logs")
 	info, err := os.Stat(auditDir)
 	if err != nil {
 		return false

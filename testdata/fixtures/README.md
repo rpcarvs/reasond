@@ -2,9 +2,9 @@ These fixtures support installer, storage, processing, and TUI tests.
 
 Layout:
 - `audits/`
-  Sample reasoning audit markdown files.
+  Sample reasoning log markdown files.
 - `repos/clean/`
-  Minimal repository baseline with no rdit assets installed.
+  Minimal repository baseline with no reasond assets installed.
 - `repos/conflict-agents/`
   Repository fixture with a conflicting `AGENTS.md`.
 - `repos/partial-codex/`

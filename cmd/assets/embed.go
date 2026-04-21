@@ -34,7 +34,7 @@ type File struct {
 	Mode         fs.FileMode
 }
 
-// FS contains the bundled init assets shipped with rdit.
+// FS contains the bundled init assets shipped with reasond.
 //
 //go:embed claude_assets/** codex_assets/**
 var FS embed.FS

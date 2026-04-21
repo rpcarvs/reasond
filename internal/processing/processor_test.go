@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rpcarvs/rdit/internal/judge"
-	"github.com/rpcarvs/rdit/internal/storage"
+	"github.com/rpcarvs/reasond/internal/judge"
+	"github.com/rpcarvs/reasond/internal/storage"
 )
 
 type fakeRunner struct{}
@@ -43,7 +43,7 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audit files: %v", err)
 	}
 
@@ -103,7 +103,10 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 		t.Fatalf("expected fail.md to remain pending, got %+v", pending)
 	}
 
-	board, err := store.ListBoardFindings()
+	board, err := store.ListBoardFindingsForFilter(storage.BoardFilter{
+		Provider:   storage.JudgeProviderCodex,
+		IncludeAll: true,
+	})
 	if err != nil {
 		t.Fatalf("list board findings: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -161,7 +164,7 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audit files: %v", err)
 	}
 
@@ -188,7 +191,7 @@ func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -206,7 +209,7 @@ func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audit files: %v", err)
 	}
 
@@ -263,7 +266,7 @@ func TestProcessUnprocessedRejectsOverlappingRuns(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -281,7 +284,7 @@ func TestProcessUnprocessedRejectsOverlappingRuns(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audit files: %v", err)
 	}
 
@@ -338,7 +341,7 @@ func TestProcessUnprocessedStopsSchedulingNewWorkAfterCancel(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -359,7 +362,7 @@ func TestProcessUnprocessedStopsSchedulingNewWorkAfterCancel(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audit files: %v", err)
 	}
 

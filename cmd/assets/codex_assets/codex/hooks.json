@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$(git rev-parse --show-toplevel)/reasoning_audits\" && rm -f \"$(git rev-parse --show-toplevel)/reasoning_audits/.pending_prompt\"",
-            "statusMessage": "Preparing reasoning audit directory"
+            "command": "mkdir -p \"$(git rev-parse --show-toplevel)/reasoning_logs\" && rm -f \"$(git rev-parse --show-toplevel)/reasoning_logs/.pending_prompt\"",
+            "statusMessage": "Preparing reasoning log directory"
           }
         ]
       }

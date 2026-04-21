@@ -13,7 +13,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
 const schemaVersion = 3
@@ -31,7 +31,7 @@ const (
 	baseWriteBackoff = 20 * time.Millisecond
 )
 
-// Store owns the runtime SQLite handle and all persistence operations for rdit.
+// Store owns the runtime SQLite handle and all persistence operations for reasond.
 type Store struct {
 	db      *sql.DB
 	path    string
@@ -129,7 +129,7 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// SyncResult reports which reasoning audit files were inserted, already known, or changed unexpectedly.
+// SyncResult reports which reasoning log files were inserted, already known, or changed unexpectedly.
 type SyncResult struct {
 	Inserted           []string
 	Known              []string
@@ -153,7 +153,7 @@ type PersistResultInput struct {
 	Findings      []FindingInput
 }
 
-// SourceRow represents one immutable markdown file discovered under reasoning_audits.
+// SourceRow represents one immutable markdown file discovered under reasoning_logs.
 type SourceRow struct {
 	ID            int64
 	FilePath      string
@@ -199,9 +199,14 @@ type BoardFilter struct {
 	IncludeAll bool
 }
 
-// SyncReasoningAudits appends new audit markdown files into the source table.
-func (s *Store) SyncReasoningAudits() (SyncResult, error) {
-	entries, err := collectAuditFiles(filepath.Join(s.rootDir, "reasoning_audits"))
+type providerRecency struct {
+	Provider string
+	Time     time.Time
+}
+
+// SyncReasoningLogs appends new reasoning log markdown files into the source table.
+func (s *Store) SyncReasoningLogs() (SyncResult, error) {
+	entries, err := collectLogFiles(filepath.Join(s.rootDir, "reasoning_logs"))
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -430,14 +435,6 @@ func (s *Store) ListAllSources() ([]SourceRow, error) {
 	return sources, nil
 }
 
-// ListBoardFindings returns the card data used by the board view.
-func (s *Store) ListBoardFindings() ([]FindingSummary, error) {
-	return s.ListBoardFindingsForFilter(BoardFilter{
-		Provider:   JudgeProviderCodex,
-		IncludeAll: true,
-	})
-}
-
 // ListBoardFindingsForFilter returns board rows constrained by provider and optional file/latest filters.
 func (s *Store) ListBoardFindingsForFilter(filter BoardFilter) ([]FindingSummary, error) {
 	runTable, findingsTable, _, err := providerTables(filter.Provider)
@@ -503,11 +500,6 @@ func (s *Store) ListBoardFindingsForFilter(filter BoardFilter) ([]FindingSummary
 	}
 
 	return findings, nil
-}
-
-// GetFindingDetail loads the full detail payload for one board item.
-func (s *Store) GetFindingDetail(findingID int64) (FindingDetail, error) {
-	return s.GetFindingDetailForProvider(JudgeProviderCodex, findingID)
 }
 
 // GetFindingDetailForProvider loads one board item from the selected provider partition.
@@ -595,26 +587,25 @@ func (s *Store) ListResultFiles(provider string) ([]string, error) {
 }
 
 // MostRecentProvider returns the provider with the most recent persisted run.
-// Recency is determined by max(created_at) across provider run tables.
+// Recency is determined by the latest run in each provider partition and then
+// compared in Go using parsed timestamps.
 func (s *Store) MostRecentProvider() (string, bool, error) {
-	const query = `SELECT provider FROM (
-		SELECT ? AS provider, MAX(created_at) AS latest_created_at FROM audit_runs_codex
-		UNION ALL
-		SELECT ? AS provider, MAX(created_at) AS latest_created_at FROM audit_runs_claude
-	) ranked
-	WHERE latest_created_at IS NOT NULL
-	ORDER BY latest_created_at DESC
-	LIMIT 1`
+	return s.mostRecentProvider(false)
+}
 
-	var provider string
-	err := s.db.QueryRow(query, JudgeProviderCodex, JudgeProviderClaude).Scan(&provider)
+// PreferredBoardProvider returns the provider that should be shown first on the
+// latest-only board view. It prefers the most recent provider that currently
+// has visible findings on the board, and falls back to the most recent run when
+// neither provider has findings.
+func (s *Store) PreferredBoardProvider() (string, bool, error) {
+	provider, ok, err := s.mostRecentProvider(true)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("load most recent provider: %w", err)
+		return "", false, err
 	}
-	return provider, true, nil
+	if ok {
+		return provider, true, nil
+	}
+	return s.MostRecentProvider()
 }
 
 func (s *Store) bootstrap() error {
@@ -643,21 +634,6 @@ func (s *Store) bootstrap() error {
 			updated_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_sources_processed ON audit_sources(processed, id);`,
-		`CREATE TABLE IF NOT EXISTS audit_findings (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			source_id INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			issue TEXT NOT NULL,
-			why_text TEXT NOT NULL,
-			how_text TEXT NOT NULL,
-			score REAL NOT NULL CHECK (score >= 0.0 AND score <= 1.0),
-			judge_provider TEXT NOT NULL,
-			judge_model TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_findings_source_id ON audit_findings(source_id, id);`,
 		`CREATE TABLE IF NOT EXISTS audit_runs_codex (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id INTEGER NOT NULL,
@@ -741,6 +717,10 @@ func (s *Store) bootstrap() error {
 			_ = tx.Rollback()
 			return fmt.Errorf("migrate legacy findings: %w", err)
 		}
+	}
+	if err := dropLegacyFindingsArtifacts(tx); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("drop legacy findings artifacts: %w", err)
 	}
 
 	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d;`, schemaVersion)); err != nil {
@@ -905,6 +885,19 @@ func migrateLegacyFindings(tx *sql.Tx) error {
 	return nil
 }
 
+func dropLegacyFindingsArtifacts(tx *sql.Tx) error {
+	statements := []string{
+		`DROP INDEX IF EXISTS idx_audit_findings_source_id;`,
+		`DROP TABLE IF EXISTS audit_findings;`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("apply cleanup statement %q: %w", statement, err)
+		}
+	}
+	return nil
+}
+
 func tableExists(tx *sql.Tx, tableName string) (bool, error) {
 	var count int
 	err := tx.QueryRow(
@@ -928,6 +921,72 @@ func providerTables(provider string) (runTable string, findingsTable string, nor
 	default:
 		return "", "", "", fmt.Errorf("unsupported judge provider %q", provider)
 	}
+}
+
+func (s *Store) mostRecentProvider(visibleOnly bool) (string, bool, error) {
+	candidates := make([]providerRecency, 0, 2)
+	for _, provider := range []string{JudgeProviderCodex, JudgeProviderClaude} {
+		candidate, ok, err := s.providerRecency(provider, visibleOnly)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", false, nil
+	}
+
+	latest := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.Time.After(latest.Time) {
+			latest = candidate
+		}
+	}
+	return latest.Provider, true, nil
+}
+
+func (s *Store) providerRecency(provider string, visibleOnly bool) (providerRecency, bool, error) {
+	runTable, findingsTable, normalizedProvider, err := providerTables(provider)
+	if err != nil {
+		return providerRecency{}, false, err
+	}
+
+	query := fmt.Sprintf(`SELECT created_at FROM %s ORDER BY id DESC LIMIT 1`, runTable)
+	if visibleOnly {
+		query = fmt.Sprintf(`WITH latest_runs AS (
+			SELECT source_id, MAX(id) AS run_id
+			FROM %s
+			GROUP BY source_id
+		)
+		SELECT r.created_at
+		FROM latest_runs lr
+		INNER JOIN %s r ON r.id = lr.run_id
+		INNER JOIN %s f ON f.run_id = lr.run_id
+		GROUP BY r.id, r.created_at
+		ORDER BY r.id DESC
+		LIMIT 1`, runTable, runTable, findingsTable)
+	}
+
+	var createdAt string
+	err = s.db.QueryRow(query).Scan(&createdAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return providerRecency{}, false, nil
+		}
+		return providerRecency{}, false, fmt.Errorf("load provider recency for %q: %w", normalizedProvider, err)
+	}
+
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return providerRecency{}, false, fmt.Errorf("parse provider recency for %q: %w", normalizedProvider, err)
+	}
+
+	return providerRecency{
+		Provider: normalizedProvider,
+		Time:     parsed,
+	}, true, nil
 }
 
 func applyConnectionPragmas(db *sql.DB) error {
@@ -996,27 +1055,27 @@ func (s *Store) withWriteTx(fn func(*sql.Tx) error) error {
 	return fmt.Errorf("sqlite write failed after %d attempts", maxWriteAttempts)
 }
 
-type auditFile struct {
+type logFile struct {
 	RelativePath string
 	FileName     string
 	SizeBytes    int64
 	ContentHash  string
 }
 
-func collectAuditFiles(auditDir string) ([]auditFile, error) {
-	info, err := os.Stat(auditDir)
+func collectLogFiles(logDir string) ([]logFile, error) {
+	info, err := os.Stat(logDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("stat reasoning_audits: %w", err)
+		return nil, fmt.Errorf("stat reasoning_logs: %w", err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%q exists but is not a directory", auditDir)
+		return nil, fmt.Errorf("%q exists but is not a directory", logDir)
 	}
 
-	var files []auditFile
-	err = filepath.WalkDir(auditDir, func(path string, entry os.DirEntry, walkErr error) error {
+	var files []logFile
+	err = filepath.WalkDir(logDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -1037,12 +1096,12 @@ func collectAuditFiles(auditDir string) ([]auditFile, error) {
 			return fmt.Errorf("stat %q: %w", path, err)
 		}
 
-		relativePath, err := filepath.Rel(auditDir, path)
+		relativePath, err := filepath.Rel(logDir, path)
 		if err != nil {
 			return fmt.Errorf("derive relative path for %q: %w", path, err)
 		}
 
-		files = append(files, auditFile{
+		files = append(files, logFile{
 			RelativePath: filepath.ToSlash(relativePath),
 			FileName:     filepath.Base(path),
 			SizeBytes:    info.Size(),
@@ -1054,13 +1113,13 @@ func collectAuditFiles(auditDir string) ([]auditFile, error) {
 		return nil, err
 	}
 
-	slices.SortFunc(files, func(a, b auditFile) int {
+	slices.SortFunc(files, func(a, b logFile) int {
 		return strings.Compare(a.RelativePath, b.RelativePath)
 	})
 	return files, nil
 }
 
-func syncAuditEntry(tx *sql.Tx, entry auditFile, now string) (string, error) {
+func syncAuditEntry(tx *sql.Tx, entry logFile, now string) (string, error) {
 	var existingHash string
 	err := tx.QueryRow(
 		`SELECT content_hash FROM audit_sources WHERE file_path = ?`,

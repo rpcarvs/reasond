@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/testutil"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/testutil"
 )
 
 func TestInstallCodexIntoCleanFixture(t *testing.T) {
@@ -64,8 +64,8 @@ func TestInstallMergesManagedBlockIntoExistingAgentsFile(t *testing.T) {
 	if !strings.Contains(text, "# Custom Agent Rules") {
 		t.Fatalf("expected original AGENTS content to be preserved")
 	}
-	if strings.Count(text, reasoningAuditsBlockBegin) != 1 {
-		t.Fatalf("expected one managed reasoning audits block, got %d", strings.Count(text, reasoningAuditsBlockBegin))
+	if strings.Count(text, reasoningLogsBlockBegin) != 1 {
+		t.Fatalf("expected one managed reasoning logs block, got %d", strings.Count(text, reasoningLogsBlockBegin))
 	}
 }
 

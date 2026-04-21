@@ -9,7 +9,7 @@ if [[ -z "$AUDIT_DIR" ]]; then
   exit 0
 fi
 
-AUDIT_DIR="$AUDIT_DIR/reasoning_audits"
+AUDIT_DIR="$AUDIT_DIR/reasoning_logs"
 if [[ ! -d "$AUDIT_DIR" ]]; then
   exit 0
 fi

@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
-	"time"
 
-	"github.com/rpcarvs/rdit/internal/testutil"
+	"github.com/rpcarvs/reasond/internal/testutil"
 
 	_ "modernc.org/sqlite"
 )
@@ -41,12 +40,12 @@ func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
 		t.Fatalf("expected audit_sources table, got %q", sourceTable)
 	}
 
-	var findingsTable string
-	if err := store.DB().QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'audit_findings';`).Scan(&findingsTable); err != nil {
-		t.Fatalf("query audit_findings table: %v", err)
+	var legacyFindingsCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_findings';`).Scan(&legacyFindingsCount); err != nil {
+		t.Fatalf("query audit_findings table count: %v", err)
 	}
-	if findingsTable != "audit_findings" {
-		t.Fatalf("expected audit_findings table, got %q", findingsTable)
+	if legacyFindingsCount != 0 {
+		t.Fatalf("expected no legacy audit_findings table in fresh schema, got %d", legacyFindingsCount)
 	}
 	for _, table := range []string{
 		"audit_runs_codex",
@@ -66,7 +65,7 @@ func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
 		}
 	}
 
-	expectedPath := filepath.Join(root, ".rdit", "audits_reports.db")
+	expectedPath := filepath.Join(root, ".reasond", "audits_reports.db")
 	if store.Path() != expectedPath {
 		t.Fatalf("expected database path %q, got %q", expectedPath, store.Path())
 	}
@@ -93,22 +92,22 @@ func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
 	}
 }
 
-func TestSyncReasoningAuditsInsertsAndDetectsImmutableConflicts(t *testing.T) {
+func TestSyncReasoningLogsInsertsAndDetectsImmutableConflicts(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
-	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+	logDir := filepath.Join(root, "reasoning_logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(auditDir, "first.md"), []byte("# one\n"), 0o644); err != nil {
-		t.Fatalf("write first audit: %v", err)
+	if err := os.WriteFile(filepath.Join(logDir, "first.md"), []byte("# one\n"), 0o644); err != nil {
+		t.Fatalf("write first log: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(auditDir, "second.md"), []byte("# two\n"), 0o644); err != nil {
-		t.Fatalf("write second audit: %v", err)
+	if err := os.WriteFile(filepath.Join(logDir, "second.md"), []byte("# two\n"), 0o644); err != nil {
+		t.Fatalf("write second log: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(auditDir, ".control"), []byte("ignore\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, ".control"), []byte("ignore\n"), 0o644); err != nil {
 		t.Fatalf("write control file: %v", err)
 	}
 
@@ -122,9 +121,9 @@ func TestSyncReasoningAuditsInsertsAndDetectsImmutableConflicts(t *testing.T) {
 		}
 	}()
 
-	result, err := store.SyncReasoningAudits()
+	result, err := store.SyncReasoningLogs()
 	if err != nil {
-		t.Fatalf("sync audit files: %v", err)
+		t.Fatalf("sync log files: %v", err)
 	}
 
 	expectedInserted := []string{"first.md", "second.md"}
@@ -138,34 +137,34 @@ func TestSyncReasoningAuditsInsertsAndDetectsImmutableConflicts(t *testing.T) {
 		t.Fatalf("expected no immutable conflicts on first sync, got %v", result.ImmutableConflicts)
 	}
 
-	result, err = store.SyncReasoningAudits()
+	result, err = store.SyncReasoningLogs()
 	if err != nil {
-		t.Fatalf("sync known audit files: %v", err)
+		t.Fatalf("sync known log files: %v", err)
 	}
 	if !slices.Equal(result.Known, expectedInserted) {
 		t.Fatalf("expected known %v, got %v", expectedInserted, result.Known)
 	}
 
-	if err := os.WriteFile(filepath.Join(auditDir, "second.md"), []byte("# changed\n"), 0o644); err != nil {
-		t.Fatalf("mutate audit file: %v", err)
+	if err := os.WriteFile(filepath.Join(logDir, "second.md"), []byte("# changed\n"), 0o644); err != nil {
+		t.Fatalf("mutate log file: %v", err)
 	}
 
-	result, err = store.SyncReasoningAudits()
+	result, err = store.SyncReasoningLogs()
 	if err != nil {
-		t.Fatalf("sync mutated audit files: %v", err)
+		t.Fatalf("sync mutated log files: %v", err)
 	}
 	if !slices.Equal(result.ImmutableConflicts, []string{"second.md"}) {
 		t.Fatalf("expected immutable conflict for second.md, got %v", result.ImmutableConflicts)
 	}
 }
 
-func TestSyncReasoningAuditsLoadsFixtureFiles(t *testing.T) {
+func TestSyncReasoningLogsLoadsFixtureFiles(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	fixtureAudits := testutil.CopyFixtureTree(t, "audits")
-	if err := os.Rename(fixtureAudits, filepath.Join(root, "reasoning_audits")); err != nil {
-		t.Fatalf("move fixture audits into repo: %v", err)
+	fixtureLogs := testutil.CopyFixtureTree(t, "audits")
+	if err := os.Rename(fixtureLogs, filepath.Join(root, "reasoning_logs")); err != nil {
+		t.Fatalf("move fixture logs into repo: %v", err)
 	}
 
 	store, err := Open(root)
@@ -178,9 +177,9 @@ func TestSyncReasoningAuditsLoadsFixtureFiles(t *testing.T) {
 		}
 	}()
 
-	result, err := store.SyncReasoningAudits()
+	result, err := store.SyncReasoningLogs()
 	if err != nil {
-		t.Fatalf("sync fixture audit files: %v", err)
+		t.Fatalf("sync fixture log files: %v", err)
 	}
 
 	expected := []string{
@@ -197,16 +196,16 @@ func TestPersistProcessedResultHandlesZeroAndMultipleFindings(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
-	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+	logDir := filepath.Join(root, "reasoning_logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(auditDir, "zero.md"), []byte("# zero\n"), 0o644); err != nil {
-		t.Fatalf("write zero audit: %v", err)
+	if err := os.WriteFile(filepath.Join(logDir, "zero.md"), []byte("# zero\n"), 0o644); err != nil {
+		t.Fatalf("write zero log: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(auditDir, "multi.md"), []byte("# multi\n"), 0o644); err != nil {
-		t.Fatalf("write multi audit: %v", err)
+	if err := os.WriteFile(filepath.Join(logDir, "multi.md"), []byte("# multi\n"), 0o644); err != nil {
+		t.Fatalf("write multi log: %v", err)
 	}
 
 	store, err := Open(root)
@@ -219,8 +218,8 @@ func TestPersistProcessedResultHandlesZeroAndMultipleFindings(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncReasoningLogs(); err != nil {
+		t.Fatalf("sync log files: %v", err)
 	}
 
 	zeroID := sourceIDByPath(t, store, "zero.md")
@@ -296,13 +295,13 @@ func TestQueryMethodsExposePendingSourcesAndBoardData(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
-	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+	logDir := filepath.Join(root, "reasoning_logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
 	}
 
 	for _, name := range []string{"pending.md", "zero.md", "issue.md"} {
-		if err := os.WriteFile(filepath.Join(auditDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
@@ -317,8 +316,8 @@ func TestQueryMethodsExposePendingSourcesAndBoardData(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncReasoningLogs(); err != nil {
+		t.Fatalf("sync log files: %v", err)
 	}
 
 	if err := store.PersistProcessedResult(PersistResultInput{
@@ -386,12 +385,12 @@ func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
-	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+	logDir := filepath.Join(root, "reasoning_logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
 	}
 	for _, name := range []string{"one.md", "two.md"} {
-		if err := os.WriteFile(filepath.Join(auditDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
@@ -406,8 +405,8 @@ func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningAudits(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncReasoningLogs(); err != nil {
+		t.Fatalf("sync log files: %v", err)
 	}
 
 	provider, ok, err := store.MostRecentProvider()
@@ -425,13 +424,26 @@ func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("persist codex run: %v", err)
 	}
-	time.Sleep(2 * time.Millisecond)
 	if err := store.PersistProcessedResult(PersistResultInput{
 		SourceID:      sourceIDByPath(t, store, "two.md"),
 		JudgeProvider: JudgeProviderClaude,
 		JudgeModel:    "claude-haiku-4-5",
 	}); err != nil {
 		t.Fatalf("persist claude run: %v", err)
+	}
+
+	// RFC3339Nano text is not lexicographically stable across optional fractions.
+	// This update makes the earlier run sort later as plain text, so the test
+	// verifies that provider recency uses parsed timestamps instead.
+	if _, err := store.DB().Exec(
+		`UPDATE audit_runs_codex SET created_at = '2026-04-21T12:00:00Z'`,
+	); err != nil {
+		t.Fatalf("update codex created_at: %v", err)
+	}
+	if _, err := store.DB().Exec(
+		`UPDATE audit_runs_claude SET created_at = '2026-04-21T12:00:00.000000001Z'`,
+	); err != nil {
+		t.Fatalf("update claude created_at: %v", err)
 	}
 
 	provider, ok, err = store.MostRecentProvider()
@@ -443,6 +455,68 @@ func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
 	}
 	if provider != JudgeProviderClaude {
 		t.Fatalf("expected claude as latest provider, got %q", provider)
+	}
+}
+
+func TestPreferredBoardProviderSkipsNewestProviderWithoutVisibleFindings(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	logDir := filepath.Join(root, "reasoning_logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create log dir: %v", err)
+	}
+	for _, name := range []string{"one.md", "two.md"} {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	store, err := Open(root)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	if _, err := store.SyncReasoningLogs(); err != nil {
+		t.Fatalf("sync log files: %v", err)
+	}
+
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "one.md"),
+		JudgeProvider: JudgeProviderClaude,
+		JudgeModel:    "claude-haiku-4-5",
+		Findings: []FindingInput{{
+			Title: "Claude issue",
+			Issue: "Issue",
+			Why:   "Why",
+			How:   "How",
+			Score: 0.6,
+		}},
+	}); err != nil {
+		t.Fatalf("persist claude finding: %v", err)
+	}
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "two.md"),
+		JudgeProvider: JudgeProviderCodex,
+		JudgeModel:    "gpt-5.4-mini",
+	}); err != nil {
+		t.Fatalf("persist codex zero-finding run: %v", err)
+	}
+
+	provider, ok, err := store.PreferredBoardProvider()
+	if err != nil {
+		t.Fatalf("preferred board provider: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected a preferred board provider")
+	}
+	if provider != JudgeProviderClaude {
+		t.Fatalf("expected claude as preferred board provider, got %q", provider)
 	}
 }
 
@@ -464,7 +538,7 @@ func TestOpenMigratesLegacyFindingsIntoProviderRunTables(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	runtimeDir := filepath.Join(root, ".rdit")
+	runtimeDir := filepath.Join(root, ".reasond")
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("create runtime dir: %v", err)
 	}
@@ -567,6 +641,14 @@ func TestOpenMigratesLegacyFindingsIntoProviderRunTables(t *testing.T) {
 	}
 	if len(board) != 2 {
 		t.Fatalf("expected two migrated findings in latest view, got %+v", board)
+	}
+
+	var legacyFindingsCountAfter int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_findings';`).Scan(&legacyFindingsCountAfter); err != nil {
+		t.Fatalf("query cleaned legacy findings table count: %v", err)
+	}
+	if legacyFindingsCountAfter != 0 {
+		t.Fatalf("expected migrated database to remove legacy audit_findings table, got %d", legacyFindingsCountAfter)
 	}
 }
 

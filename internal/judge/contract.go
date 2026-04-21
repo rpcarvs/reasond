@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
 // SchemaFileName is the runtime filename used for the shared structured-output schema.
@@ -77,12 +77,12 @@ func Schema() string {
 	return schemaJSON
 }
 
-// SchemaPath returns where the shared judge schema file should live inside .rdit.
+// SchemaPath returns where the shared judge schema file should live inside .reasond.
 func SchemaPath(rootDir string) string {
 	return filepath.Join(rootDir, appRuntime.DirectoryName, SchemaFileName)
 }
 
-// WriteSchema materializes the schema into .rdit so CLI runners can pass it by path.
+// WriteSchema materializes the schema into .reasond so CLI runners can pass it by path.
 func WriteSchema(rootDir string) (string, error) {
 	rootDir, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -100,7 +100,7 @@ func WriteSchema(rootDir string) (string, error) {
 	return schemaPath, nil
 }
 
-// BuildPrompt produces the provider-neutral judging prompt for one reasoning audit file.
+// BuildPrompt produces the provider-neutral judging prompt for one reasoning log file.
 func BuildPrompt(auditMarkdown string) string {
 	return fmt.Sprintf(`You are auditing a coding agent reasoning log against the user prompt captured in the same file.
 

@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/fang"
 	"github.com/spf13/cobra"
 
-	"github.com/rpcarvs/rdit/internal/tui"
+	"github.com/rpcarvs/reasond/internal/tui"
 )
 
 var (
@@ -15,9 +15,9 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "rdit",
-	Short:         "Open the rdit reasoning audit TUI",
-	Long:          "Open the rdit Bubble Tea interface to inspect reasoning audits and manage provider installation from inside the TUI.",
+	Use:           "reasond",
+	Short:         "Open the reasond reasoning audit TUI",
+	Long:          "Open the reasond Bubble Tea interface to inspect reasoning audits and manage provider installation from inside the TUI.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

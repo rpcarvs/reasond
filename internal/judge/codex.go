@@ -31,7 +31,7 @@ func (r CodexRunner) Run(ctx context.Context, rootDir, model, auditMarkdown stri
 		return Response{}, err
 	}
 
-	outputFile, err := os.CreateTemp("", "rdit-codex-last-*.json")
+	outputFile, err := os.CreateTemp("", "reasond-codex-last-*.json")
 	if err != nil {
 		return Response{}, fmt.Errorf("create codex output temp file: %w", err)
 	}

@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
 )
 
 type Status string

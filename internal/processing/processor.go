@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rpcarvs/rdit/internal/judge"
-	"github.com/rpcarvs/rdit/internal/storage"
+	"github.com/rpcarvs/reasond/internal/judge"
+	"github.com/rpcarvs/reasond/internal/storage"
 )
 
 const (
@@ -247,7 +247,7 @@ func evaluateSource(
 		}
 	}
 
-	auditMarkdown, err := os.ReadFile(filepath.Join(rootDir, "reasoning_audits", filepath.FromSlash(source.FilePath)))
+	auditMarkdown, err := os.ReadFile(filepath.Join(rootDir, "reasoning_logs", filepath.FromSlash(source.FilePath)))
 	if err != nil {
 		return evaluationOutcome{
 			Source: source,

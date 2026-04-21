@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/codexconfig"
-	"github.com/rpcarvs/rdit/internal/integrity"
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/codexconfig"
+	"github.com/rpcarvs/reasond/internal/integrity"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
 func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
@@ -37,8 +37,8 @@ func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
 	if _, err := os.Stat(databasePath); err != nil {
 		t.Fatalf("stat initialized database: %v", err)
 	}
-	if info, err := os.Stat(filepath.Join(root, "reasoning_audits")); err != nil || !info.IsDir() {
-		t.Fatalf("expected reasoning_audits directory to exist, stat err=%v", err)
+	if info, err := os.Stat(filepath.Join(root, "reasoning_logs")); err != nil || !info.IsDir() {
+		t.Fatalf("expected reasoning_logs directory to exist, stat err=%v", err)
 	}
 
 	report, err := (integrity.Checker{}).Check(root)
@@ -101,7 +101,7 @@ func TestInitProviderCodexBlockedConfigDoesNotMutateRepository(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(root, ".codex"),
 		filepath.Join(root, "AGENTS.md"),
-		filepath.Join(root, ".rdit"),
+		filepath.Join(root, ".reasond"),
 		filepath.Join(root, ".gitignore"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {

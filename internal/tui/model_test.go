@@ -10,13 +10,14 @@ import (
 	progressbar "github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/app"
-	"github.com/rpcarvs/rdit/internal/install"
-	"github.com/rpcarvs/rdit/internal/processing"
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
-	"github.com/rpcarvs/rdit/internal/storage"
-	"github.com/rpcarvs/rdit/internal/testutil"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/app"
+	"github.com/rpcarvs/reasond/internal/integrity"
+	"github.com/rpcarvs/reasond/internal/install"
+	"github.com/rpcarvs/reasond/internal/processing"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/storage"
+	"github.com/rpcarvs/reasond/internal/testutil"
 )
 
 func TestReloadStateOnUninitializedRepoStaysInOverview(t *testing.T) {
@@ -48,6 +49,22 @@ func TestReloadStateOnUninitializedRepoStaysInOverview(t *testing.T) {
 	}
 }
 
+func sourceIDForPath(t *testing.T, store *storage.Store, path string) int64 {
+	t.Helper()
+
+	sources, err := store.ListAllSources()
+	if err != nil {
+		t.Fatalf("list all sources: %v", err)
+	}
+	for _, source := range sources {
+		if source.FilePath == path {
+			return source.ID
+		}
+	}
+	t.Fatalf("source %q not found", path)
+	return 0
+}
+
 func TestReloadStateOnHealthyRepoWithPendingAuditQueuesPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -65,7 +82,7 @@ func TestReloadStateOnHealthyRepoWithPendingAuditQueuesPrompt(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -100,6 +117,43 @@ func TestReloadStateOnHealthyRepoWithPendingAuditQueuesPrompt(t *testing.T) {
 	}
 }
 
+func TestReloadStateRefreshesReportAfterDatabaseBootstrap(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := (install.Installer{}).Install(root, assetbundle.ProviderCodex); err != nil {
+		t.Fatalf("install codex assets: %v", err)
+	}
+	if _, err := appRuntime.EnsureLayout(root); err != nil {
+		t.Fatalf("ensure layout: %v", err)
+	}
+
+	databasePath := filepath.Join(root, appRuntime.DirectoryName, appRuntime.DatabaseFileName)
+	if _, err := os.Stat(databasePath); !os.IsNotExist(err) {
+		t.Fatalf("expected database to be absent before reloadState, stat err=%v", err)
+	}
+
+	bootstrap, err := app.NewBootstrap(root)
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+
+	m := model{
+		bootstrap: bootstrap,
+		progress:  progressbar.New(),
+	}
+	if err := m.reloadState(); err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+
+	if m.report.Runtime.Database.Status != integrity.StatusPresent {
+		t.Fatalf("expected refreshed report to show database present, got %s", m.report.Runtime.Database.Status)
+	}
+	if _, err := os.Stat(databasePath); err != nil {
+		t.Fatalf("expected database to exist after reloadState, stat err=%v", err)
+	}
+}
+
 func TestAuditPromptDeclineMovesToBoard(t *testing.T) {
 	t.Parallel()
 
@@ -117,7 +171,7 @@ func TestAuditPromptDeclineMovesToBoard(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create audit dir: %v", err)
 	}
@@ -316,7 +370,7 @@ func TestDetailModalUpDownScrollsContentWithoutChangingSelection(t *testing.T) {
 			Issue:         strings.Repeat("issue ", 40),
 			Why:           strings.Repeat("why ", 40),
 			How:           strings.Repeat("how ", 40),
-			SourcePath:    "reasoning_audits/a.md",
+			SourcePath:    "reasoning_logs/a.md",
 			JudgeProvider: "codex",
 			JudgeModel:    "gpt-5.4-mini",
 		},
@@ -336,13 +390,29 @@ func TestDetailModalUpDownScrollsContentWithoutChangingSelection(t *testing.T) {
 func TestDetailModalOpenSourceViewerAndReturn(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
-	sourcePath := filepath.Join(root, "reasoning_audits", "one.md")
-	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	root, store := setupBoardTestStore(t)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	if err := persistFixtureFinding(store, "a.md", storage.JudgeProviderCodex, "gpt-5.4-mini", "x", 0.5); err != nil {
+		t.Fatalf("persist fixture finding: %v", err)
 	}
-	if err := os.WriteFile(sourcePath, []byte("# Title\n\nbody\n"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
+
+	board, err := store.ListBoardFindingsForFilter(storage.BoardFilter{
+		Provider:   storage.JudgeProviderCodex,
+		IncludeAll: true,
+	})
+	if err != nil {
+		t.Fatalf("list board findings: %v", err)
+	}
+	if len(board) != 1 {
+		t.Fatalf("expected one board finding, got %d", len(board))
+	}
+
+	detail, err := store.GetFindingDetailForProvider(storage.JudgeProviderCodex, board[0].ID)
+	if err != nil {
+		t.Fatalf("load detail: %v", err)
 	}
 
 	m := model{
@@ -350,11 +420,7 @@ func TestDetailModalOpenSourceViewerAndReturn(t *testing.T) {
 		bootstrap: app.Bootstrap{
 			RootDir: root,
 		},
-		detail: &storage.FindingDetail{
-			ID:         1,
-			Title:      "x",
-			SourcePath: filepath.Join("reasoning_audits", "one.md"),
-		},
+		detail: &detail,
 	}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -364,6 +430,12 @@ func TestDetailModalOpenSourceViewerAndReturn(t *testing.T) {
 	}
 	if len(next.sourceLines) == 0 {
 		t.Fatalf("expected source lines to be loaded")
+	}
+	if next.sourcePath != filepath.Join(root, "reasoning_logs", "a.md") {
+		t.Fatalf("expected source path inside reasoning_logs, got %q", next.sourcePath)
+	}
+	if next.sourceLines[0] != "# a.md" {
+		t.Fatalf("expected persisted source contents, got %q", next.sourceLines[0])
 	}
 
 	backModel, cmd := next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -478,6 +550,44 @@ func TestReloadStateDefaultsProviderToMostRecentRun(t *testing.T) {
 	}
 }
 
+func TestReloadStatePrefersProviderWithVisibleBoardFindings(t *testing.T) {
+	t.Parallel()
+
+	root, store := setupBoardTestStore(t)
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	if err := persistFixtureFinding(store, "a.md", "claude", "claude-haiku-4-5", "Claude visible", 0.8); err != nil {
+		t.Fatalf("persist claude finding: %v", err)
+	}
+	if err := store.PersistProcessedResult(storage.PersistResultInput{
+		SourceID:      sourceIDForPath(t, store, "b.md"),
+		JudgeProvider: storage.JudgeProviderCodex,
+		JudgeModel:    "gpt-5.4-mini",
+	}); err != nil {
+		t.Fatalf("persist codex zero-finding run: %v", err)
+	}
+
+	bootstrap, err := app.NewBootstrap(root)
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+	m := model{bootstrap: bootstrap, progress: progressbar.New()}
+	if err := m.reloadState(); err != nil {
+		t.Fatalf("reload state: %v", err)
+	}
+
+	if m.boardProvider != processing.ProviderClaude {
+		t.Fatalf("expected provider claude, got %s", m.boardProvider)
+	}
+	if len(m.boardFindings) != 1 || m.boardFindings[0].Title != "Claude visible" {
+		t.Fatalf("expected claude visible finding, got %+v", m.boardFindings)
+	}
+}
+
 func TestBoardATogglesLatestAndAllRuns(t *testing.T) {
 	t.Parallel()
 
@@ -588,7 +698,7 @@ func setupBoardTestStore(t *testing.T) (string, *storage.Store) {
 	t.Helper()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_audits")
+	auditDir := filepath.Join(root, "reasoning_logs")
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("mkdir audit dir: %v", err)
 	}
@@ -602,7 +712,7 @@ func setupBoardTestStore(t *testing.T) (string, *storage.Store) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if _, err := store.SyncReasoningAudits(); err != nil {
+	if _, err := store.SyncReasoningLogs(); err != nil {
 		t.Fatalf("sync audits: %v", err)
 	}
 

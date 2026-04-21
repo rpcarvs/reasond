@@ -6,7 +6,7 @@
 # If no new file, do nothing (prompts keep accumulating).
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-AUDIT_DIR="$REPO_ROOT/reasoning_audits"
+AUDIT_DIR="$REPO_ROOT/reasoning_logs"
 
 if [[ ! -d "$AUDIT_DIR" ]]; then
   exit 0

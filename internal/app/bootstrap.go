@@ -6,14 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/codexconfig"
-	"github.com/rpcarvs/rdit/internal/install"
-	"github.com/rpcarvs/rdit/internal/integrity"
-	"github.com/rpcarvs/rdit/internal/judge"
-	"github.com/rpcarvs/rdit/internal/processing"
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
-	"github.com/rpcarvs/rdit/internal/storage"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/codexconfig"
+	"github.com/rpcarvs/reasond/internal/install"
+	"github.com/rpcarvs/reasond/internal/integrity"
+	"github.com/rpcarvs/reasond/internal/judge"
+	"github.com/rpcarvs/reasond/internal/processing"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/storage"
 )
 
 // Bootstrap wires shared initialization, integrity, storage, and processing services for one repo.

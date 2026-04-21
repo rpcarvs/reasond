@@ -8,14 +8,15 @@ import (
 )
 
 const (
-	DirectoryName    = ".rdit"
+	DirectoryName    = ".reasond"
 	DatabaseFileName = "audits_reports.db"
+	logsDirectoryName = "reasoning_logs"
 )
 
 // GitIgnoreEntries are the repository-local paths that init must keep out of version control.
 var GitIgnoreEntries = []string{
 	DirectoryName + "/",
-	"reasoning_audits/",
+	logsDirectoryName + "/",
 }
 
 // LayoutResult reports which runtime layout pieces were created or already present.
@@ -27,7 +28,7 @@ type LayoutResult struct {
 	GitIgnorePresent  []string
 }
 
-// EnsureLayout prepares the local runtime directory and gitignore entries required by rdit.
+// EnsureLayout prepares the local runtime directory and gitignore entries required by reasond.
 func EnsureLayout(targetDir string) (LayoutResult, error) {
 	targetDir, err := filepath.Abs(targetDir)
 	if err != nil {
@@ -40,7 +41,7 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 		return LayoutResult{}, err
 	}
 
-	auditDir := filepath.Join(targetDir, "reasoning_audits")
+	auditDir := filepath.Join(targetDir, logsDirectoryName)
 	auditCreated, err := ensureDirectory(auditDir)
 	if err != nil {
 		return LayoutResult{}, err

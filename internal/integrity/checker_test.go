@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
-	"github.com/rpcarvs/rdit/internal/install"
-	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
-	"github.com/rpcarvs/rdit/internal/storage"
+	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/install"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/storage"
 )
 
 func TestCheckReportsHealthyCodexInstall(t *testing.T) {
