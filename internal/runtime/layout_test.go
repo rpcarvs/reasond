@@ -21,13 +21,16 @@ func TestEnsureLayoutUsesPartialFixtureIdempotently(t *testing.T) {
 	if result.RuntimeDirCreated {
 		t.Fatalf("expected existing .reasond directory to be reused")
 	}
-	if !result.AuditDirCreated {
-		t.Fatalf("expected reasoning_logs directory to be created")
+	if !result.StagingDirCreated {
+		t.Fatalf("expected .reasond_tmp directory to be created")
+	}
+	if !result.ArchiveDirCreated {
+		t.Fatalf("expected reasond_audits directory to be created")
 	}
 	if result.GitIgnoreCreated {
 		t.Fatalf("expected existing .gitignore to be reused")
 	}
-	if len(result.GitIgnoreAdded) != 1 || result.GitIgnoreAdded[0] != "reasoning_logs/" {
+	if len(result.GitIgnoreAdded) != 1 || result.GitIgnoreAdded[0] != ".reasond_tmp/" {
 		t.Fatalf("unexpected gitignore additions: %v", result.GitIgnoreAdded)
 	}
 	if len(result.GitIgnorePresent) != 1 || result.GitIgnorePresent[0] != ".reasond/" {
@@ -38,10 +41,13 @@ func TestEnsureLayoutUsesPartialFixtureIdempotently(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	if string(content) != ".reasond/\nreasoning_logs/\n" {
+	if string(content) != ".reasond/\n.reasond_tmp/\n" {
 		t.Fatalf("unexpected .gitignore content: %q", string(content))
 	}
-	if info, err := os.Stat(filepath.Join(root, "reasoning_logs")); err != nil || !info.IsDir() {
-		t.Fatalf("expected reasoning_logs directory to exist, stat err=%v", err)
+	if info, err := os.Stat(filepath.Join(root, ".reasond_tmp")); err != nil || !info.IsDir() {
+		t.Fatalf("expected .reasond_tmp directory to exist, stat err=%v", err)
+	}
+	if info, err := os.Stat(filepath.Join(root, ".reasond", "reasond_audits")); err != nil || !info.IsDir() {
+		t.Fatalf("expected reasond_audits directory to exist, stat err=%v", err)
 	}
 }

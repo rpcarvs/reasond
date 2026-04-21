@@ -100,9 +100,9 @@ func WriteSchema(rootDir string) (string, error) {
 	return schemaPath, nil
 }
 
-// BuildPrompt produces the provider-neutral judging prompt for one reasoning log file.
+// BuildPrompt produces the provider-neutral judging prompt for one archived audit markdown file.
 func BuildPrompt(auditMarkdown string) string {
-	return fmt.Sprintf(`You are auditing a coding agent reasoning log against the user prompt captured in the same file.
+	return fmt.Sprintf(`You are auditing a coding agent reasoning audit against the user prompt captured in the same file.
 
 Your job is to identify only substantive reasoning or prompt-following problems.
 

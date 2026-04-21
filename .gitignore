@@ -1,4 +1,4 @@
 .faz/
 .treelines/
-.rdit/
-reasoning_audits/
+.reasond/
+.reasond_tmp/

@@ -31,6 +31,7 @@ type Report struct {
 // RuntimeStatus captures the integrity of the local reasond runtime files.
 type RuntimeStatus struct {
 	RuntimeDir        ItemStatus
+	ArchiveDir        ItemStatus
 	Database          ItemStatus
 	GitIgnore         ItemStatus
 	MissingGitIgnores []string
@@ -57,6 +58,7 @@ type FileStatus struct {
 // Healthy reports whether runtime requirements and at least one provider are fully present.
 func (r Report) Healthy() bool {
 	if r.Runtime.RuntimeDir.Status != StatusPresent ||
+		r.Runtime.ArchiveDir.Status != StatusPresent ||
 		r.Runtime.Database.Status != StatusPresent ||
 		r.Runtime.GitIgnore.Status != StatusPresent {
 		return false
@@ -125,6 +127,7 @@ func (Checker) Check(targetDir string) (Report, error) {
 
 func checkRuntime(rootDir string) RuntimeStatus {
 	runtimeDir := filepath.Join(rootDir, appRuntime.DirectoryName)
+	archiveDir := appRuntime.ArchivePath(rootDir)
 	databasePath := appRuntime.DatabasePath(rootDir)
 	gitIgnorePath := filepath.Join(rootDir, ".gitignore")
 
@@ -134,6 +137,10 @@ func checkRuntime(rootDir string) RuntimeStatus {
 		RuntimeDir: ItemStatus{
 			Path:   runtimeDir,
 			Status: pathStatus(runtimeDir, true),
+		},
+		ArchiveDir: ItemStatus{
+			Path:   archiveDir,
+			Status: pathStatus(archiveDir, true),
 		},
 		Database: ItemStatus{
 			Path:   databasePath,

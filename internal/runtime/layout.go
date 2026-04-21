@@ -8,21 +8,23 @@ import (
 )
 
 const (
-	DirectoryName    = ".reasond"
-	DatabaseFileName = "audits_reports.db"
-	logsDirectoryName = "reasoning_logs"
+	DirectoryName       = ".reasond"
+	DatabaseFileName    = "audits_reports.db"
+	StagingDirectoryName = ".reasond_tmp"
+	ArchiveDirectoryName = "reasond_audits"
 )
 
 // GitIgnoreEntries are the repository-local paths that init must keep out of version control.
 var GitIgnoreEntries = []string{
 	DirectoryName + "/",
-	logsDirectoryName + "/",
+	StagingDirectoryName + "/",
 }
 
 // LayoutResult reports which runtime layout pieces were created or already present.
 type LayoutResult struct {
 	RuntimeDirCreated bool
-	AuditDirCreated   bool
+	StagingDirCreated bool
+	ArchiveDirCreated bool
 	GitIgnoreCreated  bool
 	GitIgnoreAdded    []string
 	GitIgnorePresent  []string
@@ -41,15 +43,22 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 		return LayoutResult{}, err
 	}
 
-	auditDir := filepath.Join(targetDir, logsDirectoryName)
-	auditCreated, err := ensureDirectory(auditDir)
+	stagingDir := filepath.Join(targetDir, StagingDirectoryName)
+	stagingCreated, err := ensureDirectory(stagingDir)
+	if err != nil {
+		return LayoutResult{}, err
+	}
+
+	archiveDir := filepath.Join(runtimeDir, ArchiveDirectoryName)
+	archiveCreated, err := ensureDirectory(archiveDir)
 	if err != nil {
 		return LayoutResult{}, err
 	}
 
 	result := LayoutResult{
 		RuntimeDirCreated: created,
-		AuditDirCreated:   auditCreated,
+		StagingDirCreated: stagingCreated,
+		ArchiveDirCreated: archiveCreated,
 	}
 
 	gitIgnorePath := filepath.Join(targetDir, ".gitignore")
@@ -67,6 +76,11 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 // DatabasePath returns the location of the SQLite database inside the runtime directory.
 func DatabasePath(targetDir string) string {
 	return filepath.Join(targetDir, DirectoryName, DatabaseFileName)
+}
+
+// ArchivePath returns the canonical audit archive directory inside the runtime directory.
+func ArchivePath(targetDir string) string {
+	return filepath.Join(targetDir, DirectoryName, ArchiveDirectoryName)
 }
 
 func ensureDirectory(path string) (bool, error) {

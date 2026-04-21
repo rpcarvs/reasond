@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	progressbar "github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ import (
 	"github.com/rpcarvs/reasond/internal/app"
 	"github.com/rpcarvs/reasond/internal/integrity"
 	"github.com/rpcarvs/reasond/internal/processing"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/storage"
 )
 
@@ -56,6 +58,8 @@ const (
 	processModePending processMode = "pending"
 	processModeAll     processMode = "all"
 )
+
+const sourceScrollStep = 10
 
 type model struct {
 	bootstrap app.Bootstrap
@@ -281,10 +285,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.phase == phaseSource {
 		switch key {
 		case "up", "k":
-			m.scrollSource(-1)
+			m.scrollSource(-sourceScrollStep)
 			return m, nil
 		case "down", "j":
-			m.scrollSource(1)
+			m.scrollSource(sourceScrollStep)
 			return m, nil
 		}
 	}
@@ -629,7 +633,7 @@ func (m model) View() string {
 	switch m.phase {
 	case phaseInitSelect:
 		title := "Install provider"
-		if !hasRuntimeAndAuditDir(m.report.RootDir, m.report.Runtime.RuntimeDir.Status) {
+	if !hasRuntimeAndArchiveDir(m.report.RootDir, m.report.Runtime.RuntimeDir.Status) {
 			title = "reasond needs initialization"
 		}
 		return m.overlay(base, m.renderSelectionModal(title, []string{
@@ -665,8 +669,8 @@ func (m model) View() string {
 		))
 	case phaseAuditPrompt:
 		return m.overlay(base, m.renderMessageModal(
-			"New logs detected",
-			[]string{"There are new unprocessed logs. Do you want to audit them now?"},
+			"New audits detected",
+			[]string{"There are new unprocessed audits. Do you want to process them now?"},
 			"Enter/y yes, n no, q closes popup",
 		))
 	case phaseProviderSelect:
@@ -1012,12 +1016,7 @@ func (m *model) scrollDetail(step int) {
 func (m model) renderSourceView() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Padding(0, 1)
 	lineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	contentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 
-	height := m.height
-	if height <= 0 {
-		height = 30
-	}
 	width := m.width
 	if width <= 0 {
 		width = 100
@@ -1030,11 +1029,13 @@ func (m model) renderSourceView() string {
 		"",
 	}
 
-	contentHeight := height - len(headerLines) - 2
-	if contentHeight < 6 {
-		contentHeight = 6
+	contentHeight := m.sourceViewportHeight()
+	contentWidth := width
+	if contentWidth < 24 {
+		contentWidth = 24
 	}
-	maxOffset := len(m.sourceLines) - contentHeight
+	wrappedLines := m.sourceContentLines(contentWidth)
+	maxOffset := len(wrappedLines) - contentHeight
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -1046,29 +1047,36 @@ func (m model) renderSourceView() string {
 		offset = maxOffset
 	}
 	end := offset + contentHeight
-	if end > len(m.sourceLines) {
-		end = len(m.sourceLines)
+	if end > len(wrappedLines) {
+		end = len(wrappedLines)
 	}
 
 	lines := make([]string, 0, contentHeight+1)
-	lines = append(lines, m.sourceLines[offset:end]...)
+	lines = append(lines, wrappedLines[offset:end]...)
 	if len(lines) < contentHeight {
 		for len(lines) < contentHeight {
 			lines = append(lines, "")
 		}
 	}
-	scrollLine := "up/down scroll • q close"
+	scrollLine := fmt.Sprintf("up/down scroll %d lines • q close", sourceScrollStep)
 	if maxOffset > 0 {
-		scrollLine = fmt.Sprintf("up/down scroll (%d/%d) • q close", offset+1, maxOffset+1)
+		scrollLine = fmt.Sprintf("up/down scroll %d lines (%d/%d) • q close", sourceScrollStep, offset+1, maxOffset+1)
 	}
 	lines = append(lines, "", lineStyle.Render(scrollLine))
 
-	rendered := append(headerLines, contentStyle.Render(strings.Join(lines, "\n")))
+	rendered := append(headerLines, lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(strings.Join(lines, "\n")))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(rendered, "\n"))
 }
 
 func (m *model) scrollSource(step int) {
-	maxOffset := len(m.sourceLines) - m.sourceViewportHeight()
+	contentWidth := m.width
+	if contentWidth <= 0 {
+		contentWidth = 100
+	}
+	if contentWidth < 24 {
+		contentWidth = 24
+	}
+	maxOffset := len(m.sourceContentLines(contentWidth)) - m.sourceViewportHeight()
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -1082,11 +1090,163 @@ func (m *model) scrollSource(step int) {
 	m.sourceScroll = next
 }
 
+func (m model) sourceContentLines(contentWidth int) []string {
+	renderer := newSourceMarkdownRenderer(contentWidth)
+
+	lines := make([]string, 0, len(m.sourceLines))
+	for _, line := range m.sourceLines {
+		rendered := renderer.renderLine(line)
+		lines = append(lines, strings.Split(rendered, "\n")...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+type sourceMarkdownRenderer struct {
+	contentWidth int
+	inFence      bool
+	baseStyle    lipgloss.Style
+	headingStyle lipgloss.Style
+	quoteStyle   lipgloss.Style
+	listStyle    lipgloss.Style
+	fenceStyle   lipgloss.Style
+	inlineCode   lipgloss.Style
+	boldStyle    lipgloss.Style
+	italicStyle  lipgloss.Style
+}
+
+func newSourceMarkdownRenderer(contentWidth int) sourceMarkdownRenderer {
+	return sourceMarkdownRenderer{
+		contentWidth: contentWidth,
+		baseStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Width(contentWidth),
+		headingStyle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("230")).
+			Background(lipgloss.Color("24")),
+		quoteStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("151")).
+			Italic(true),
+		listStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("221")),
+		fenceStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("117")),
+		inlineCode: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("223")).
+			Background(lipgloss.Color("236")),
+		boldStyle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("230")),
+		italicStyle: lipgloss.NewStyle().
+			Italic(true).
+			Foreground(lipgloss.Color("180")),
+	}
+}
+
+func (r *sourceMarkdownRenderer) renderLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+
+	if isFenceLine(trimmed) {
+		r.inFence = !r.inFence
+		return r.baseStyle.Render(r.fenceStyle.Render(line))
+	}
+	if r.inFence {
+		return r.baseStyle.Render(r.fenceStyle.Render(line))
+	}
+
+	var styled string
+	switch {
+	case isHeadingLine(trimmed):
+		styled = r.headingStyle.Render(r.highlightInlineMarkdown(strings.TrimLeftFunc(line, unicode.IsSpace)))
+	case isBlockquoteLine(trimmed):
+		styled = r.quoteStyle.Render(r.highlightInlineMarkdown(line))
+	case isListLine(trimmed):
+		styled = r.listStyle.Render(r.highlightInlineMarkdown(line))
+	default:
+		styled = r.highlightInlineMarkdown(line)
+	}
+
+	return r.baseStyle.Render(styled)
+}
+
+func (r sourceMarkdownRenderer) highlightInlineMarkdown(line string) string {
+	var out strings.Builder
+	for i := 0; i < len(line); {
+		switch {
+		case line[i] == '`':
+			if end := strings.IndexByte(line[i+1:], '`'); end >= 0 {
+				segment := line[i : i+end+2]
+				out.WriteString(r.inlineCode.Render(segment))
+				i += end + 2
+				continue
+			}
+		case strings.HasPrefix(line[i:], "**"):
+			if end := strings.Index(line[i+2:], "**"); end >= 0 {
+				segment := line[i : i+end+4]
+				out.WriteString(r.boldStyle.Render(segment))
+				i += end + 4
+				continue
+			}
+		case strings.HasPrefix(line[i:], "*"):
+			if end := strings.Index(line[i+1:], "*"); end >= 0 {
+				segment := line[i : i+end+2]
+				out.WriteString(r.italicStyle.Render(segment))
+				i += end + 2
+				continue
+			}
+		case strings.HasPrefix(line[i:], "_"):
+			if end := strings.Index(line[i+1:], "_"); end >= 0 {
+				segment := line[i : i+end+2]
+				out.WriteString(r.italicStyle.Render(segment))
+				i += end + 2
+				continue
+			}
+		}
+
+		out.WriteByte(line[i])
+		i++
+	}
+	return out.String()
+}
+
+func isFenceLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
+}
+
+func isHeadingLine(trimmed string) bool {
+	if trimmed == "" || trimmed[0] != '#' {
+		return false
+	}
+	hashes := 0
+	for hashes < len(trimmed) && trimmed[hashes] == '#' {
+		hashes++
+	}
+	return hashes < len(trimmed) && trimmed[hashes] == ' '
+}
+
+func isBlockquoteLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, ">")
+}
+
+func isListLine(trimmed string) bool {
+	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ ") {
+		return true
+	}
+	digits := 0
+	for digits < len(trimmed) && trimmed[digits] >= '0' && trimmed[digits] <= '9' {
+		digits++
+	}
+	return digits > 0 && digits+1 < len(trimmed) && trimmed[digits] == '.' && trimmed[digits+1] == ' '
+}
+
 func (m model) sourceViewportHeight() int {
 	if m.height <= 0 {
-		return 20
+		return 24
 	}
-	viewport := m.height - 7
+	viewport := m.height - 6
 	if viewport < 6 {
 		return 6
 	}
@@ -1336,8 +1496,9 @@ func resolveSourcePath(rootDir string, sourcePath string) string {
 	}
 
 	clean := filepath.Clean(filepath.FromSlash(path))
-	logsDir := filepath.Join(rootDir, "reasoning_logs")
-	if clean == "reasoning_logs" || strings.HasPrefix(clean, "reasoning_logs"+string(filepath.Separator)) {
+	logsDir := appRuntime.ArchivePath(rootDir)
+	archiveRoot := filepath.Clean(filepath.Join(appRuntime.DirectoryName, appRuntime.ArchiveDirectoryName))
+	if clean == archiveRoot || strings.HasPrefix(clean, archiveRoot+string(filepath.Separator)) {
 		return filepath.Join(rootDir, clean)
 	}
 
@@ -1390,7 +1551,7 @@ func (m *model) reloadState() error {
 		if err != nil {
 			return err
 		}
-		if _, err := store.SyncReasoningLogs(); err != nil {
+		if _, err := store.SyncArchivedAudits(); err != nil {
 			_ = store.Close()
 			return err
 		}
@@ -1435,7 +1596,7 @@ func (m *model) reloadState() error {
 
 	m.phase = phaseBoard
 	m.queuedPhase = phaseBoard
-	if !hasRuntimeAndAuditDir(report.RootDir, report.Runtime.RuntimeDir.Status) {
+	if !hasRuntimeAndArchiveDir(report.RootDir, report.Runtime.RuntimeDir.Status) {
 		m.initOfferedOther = false
 		m.queuedPhase = phaseInitSelect
 	} else if m.pendingCount > 0 && !m.auditPromptDismissed {
@@ -1484,11 +1645,11 @@ func (m *model) loadFilterFiles() error {
 	return nil
 }
 
-func hasRuntimeAndAuditDir(rootDir string, runtimeStatus integrity.Status) bool {
+func hasRuntimeAndArchiveDir(rootDir string, runtimeStatus integrity.Status) bool {
 	if runtimeStatus != integrity.StatusPresent {
 		return false
 	}
-	auditDir := filepath.Join(rootDir, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(rootDir)
 	info, err := os.Stat(auditDir)
 	if err != nil {
 		return false

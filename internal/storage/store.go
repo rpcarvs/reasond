@@ -129,7 +129,7 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-// SyncResult reports which reasoning log files were inserted, already known, or changed unexpectedly.
+// SyncResult reports which archived audit files were inserted, already known, or changed unexpectedly.
 type SyncResult struct {
 	Inserted           []string
 	Known              []string
@@ -153,7 +153,7 @@ type PersistResultInput struct {
 	Findings      []FindingInput
 }
 
-// SourceRow represents one immutable markdown file discovered under reasoning_logs.
+// SourceRow represents one immutable markdown file discovered under the archive directory.
 type SourceRow struct {
 	ID            int64
 	FilePath      string
@@ -204,9 +204,9 @@ type providerRecency struct {
 	Time     time.Time
 }
 
-// SyncReasoningLogs appends new reasoning log markdown files into the source table.
-func (s *Store) SyncReasoningLogs() (SyncResult, error) {
-	entries, err := collectLogFiles(filepath.Join(s.rootDir, "reasoning_logs"))
+// SyncArchivedAudits appends new archived audit markdown files into the source table.
+func (s *Store) SyncArchivedAudits() (SyncResult, error) {
+	entries, err := collectLogFiles(appRuntime.ArchivePath(s.rootDir))
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -1068,7 +1068,7 @@ func collectLogFiles(logDir string) ([]logFile, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("stat reasoning_logs: %w", err)
+			return nil, fmt.Errorf("stat archived audits: %w", err)
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%q exists but is not a directory", logDir)

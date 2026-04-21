@@ -42,6 +42,9 @@ func TestCheckReportsHealthyCodexInstall(t *testing.T) {
 	if report.Runtime.RuntimeDir.Status != StatusPresent {
 		t.Fatalf("expected runtime dir present, got %s", report.Runtime.RuntimeDir.Status)
 	}
+	if report.Runtime.ArchiveDir.Status != StatusPresent {
+		t.Fatalf("expected archive dir present, got %s", report.Runtime.ArchiveDir.Status)
+	}
 	if report.Runtime.GitIgnore.Status != StatusPresent {
 		t.Fatalf("expected .gitignore present, got %s", report.Runtime.GitIgnore.Status)
 	}
@@ -166,6 +169,9 @@ func TestCheckReportsUnhealthyWhenDatabaseMissing(t *testing.T) {
 
 	if report.Runtime.Database.Status != StatusMissing {
 		t.Fatalf("expected database missing status, got %s", report.Runtime.Database.Status)
+	}
+	if report.Runtime.ArchiveDir.Status != StatusPresent {
+		t.Fatalf("expected archive dir present, got %s", report.Runtime.ArchiveDir.Status)
 	}
 	if report.Providers[assetbundle.ProviderClaude].Healthy() != true {
 		t.Fatalf("expected claude provider healthy")

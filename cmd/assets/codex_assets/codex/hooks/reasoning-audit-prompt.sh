@@ -5,7 +5,7 @@
 # Prompts accumulate until a Stop hook successfully processes them.
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-AUDIT_DIR="$REPO_ROOT/reasoning_logs"
+AUDIT_DIR="$REPO_ROOT/.reasond_tmp"
 
 if [[ ! -d "$AUDIT_DIR" ]]; then
   exit 0

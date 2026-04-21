@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/rpcarvs/reasond/internal/judge"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/storage"
 )
 
@@ -247,7 +248,7 @@ func evaluateSource(
 		}
 	}
 
-	auditMarkdown, err := os.ReadFile(filepath.Join(rootDir, "reasoning_logs", filepath.FromSlash(source.FilePath)))
+	auditMarkdown, err := os.ReadFile(filepath.Join(appRuntime.ArchivePath(rootDir), filepath.FromSlash(source.FilePath)))
 	if err != nil {
 		return evaluationOutcome{
 			Source: source,

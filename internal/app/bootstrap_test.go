@@ -37,8 +37,11 @@ func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
 	if _, err := os.Stat(databasePath); err != nil {
 		t.Fatalf("stat initialized database: %v", err)
 	}
-	if info, err := os.Stat(filepath.Join(root, "reasoning_logs")); err != nil || !info.IsDir() {
-		t.Fatalf("expected reasoning_logs directory to exist, stat err=%v", err)
+	if info, err := os.Stat(filepath.Join(root, appRuntime.StagingDirectoryName)); err != nil || !info.IsDir() {
+		t.Fatalf("expected .reasond_tmp directory to exist, stat err=%v", err)
+	}
+	if info, err := os.Stat(appRuntime.ArchivePath(root)); err != nil || !info.IsDir() {
+		t.Fatalf("expected reasond_audits directory to exist, stat err=%v", err)
 	}
 
 	report, err := (integrity.Checker{}).Check(root)
@@ -102,6 +105,7 @@ func TestInitProviderCodexBlockedConfigDoesNotMutateRepository(t *testing.T) {
 		filepath.Join(root, ".codex"),
 		filepath.Join(root, "AGENTS.md"),
 		filepath.Join(root, ".reasond"),
+		filepath.Join(root, ".reasond_tmp"),
 		filepath.Join(root, ".gitignore"),
 	} {
 		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {

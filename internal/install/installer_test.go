@@ -64,8 +64,8 @@ func TestInstallMergesManagedBlockIntoExistingAgentsFile(t *testing.T) {
 	if !strings.Contains(text, "# Custom Agent Rules") {
 		t.Fatalf("expected original AGENTS content to be preserved")
 	}
-	if strings.Count(text, reasoningLogsBlockBegin) != 1 {
-		t.Fatalf("expected one managed reasoning logs block, got %d", strings.Count(text, reasoningLogsBlockBegin))
+	if strings.Count(text, reasoningAuditBlockBegin) != 1 {
+		t.Fatalf("expected one managed reasoning audit block, got %d", strings.Count(text, reasoningAuditBlockBegin))
 	}
 }
 

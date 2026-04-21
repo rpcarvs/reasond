@@ -82,9 +82,9 @@ func TestReloadStateOnHealthyRepoWithPendingAuditQueuesPrompt(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning\n\nfixture\n"), 0o644); err != nil {
 		t.Fatalf("write audit file: %v", err)
@@ -171,9 +171,9 @@ func TestAuditPromptDeclineMovesToBoard(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning\n\nfixture\n"), 0o644); err != nil {
 		t.Fatalf("write audit file: %v", err)
@@ -370,7 +370,7 @@ func TestDetailModalUpDownScrollsContentWithoutChangingSelection(t *testing.T) {
 			Issue:         strings.Repeat("issue ", 40),
 			Why:           strings.Repeat("why ", 40),
 			How:           strings.Repeat("how ", 40),
-			SourcePath:    "reasoning_logs/a.md",
+			SourcePath:    ".reasond/reasond_audits/a.md",
 			JudgeProvider: "codex",
 			JudgeModel:    "gpt-5.4-mini",
 		},
@@ -431,8 +431,8 @@ func TestDetailModalOpenSourceViewerAndReturn(t *testing.T) {
 	if len(next.sourceLines) == 0 {
 		t.Fatalf("expected source lines to be loaded")
 	}
-	if next.sourcePath != filepath.Join(root, "reasoning_logs", "a.md") {
-		t.Fatalf("expected source path inside reasoning_logs, got %q", next.sourcePath)
+	if next.sourcePath != filepath.Join(root, ".reasond", "reasond_audits", "a.md") {
+		t.Fatalf("expected source path inside reasond_audits, got %q", next.sourcePath)
 	}
 	if next.sourceLines[0] != "# a.md" {
 		t.Fatalf("expected persisted source contents, got %q", next.sourceLines[0])
@@ -455,9 +455,10 @@ func TestSourceViewUpDownScrollsWithoutChangingSelection(t *testing.T) {
 		phase:      phaseSource,
 		boardIndex: 3,
 		height:     10,
-		sourceLines: []string{
-			"1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
-		},
+		sourceLines: make([]string, 30),
+	}
+	for i := range m.sourceLines {
+		m.sourceLines[i] = "line"
 	}
 
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -466,8 +467,134 @@ func TestSourceViewUpDownScrollsWithoutChangingSelection(t *testing.T) {
 	if next.boardIndex != 3 {
 		t.Fatalf("expected board index unchanged, got %d", next.boardIndex)
 	}
+	if next.sourceScroll != 10 {
+		t.Fatalf("expected source scroll to advance by 10, got %d", next.sourceScroll)
+	}
+}
+
+func TestSourceViewUpClampsAtTopAfterBlockScroll(t *testing.T) {
+	t.Parallel()
+
+	m := model{
+		phase:       phaseSource,
+		height:      10,
+		sourceScroll: 10,
+		sourceLines: make([]string, 30),
+	}
+	for i := range m.sourceLines {
+		m.sourceLines[i] = "line"
+	}
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	next := nextModel.(model)
+	if next.sourceScroll != 0 {
+		t.Fatalf("expected source scroll to clamp at 0, got %d", next.sourceScroll)
+	}
+}
+
+func TestSourceViewDownClampsAtRenderedBottom(t *testing.T) {
+	t.Parallel()
+
+	m := model{
+		phase:  phaseSource,
+		height: 12,
+		width:  80,
+		sourceLines: make([]string, 15),
+	}
+	for i := range m.sourceLines {
+		m.sourceLines[i] = "line"
+	}
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next := nextModel.(model)
+	if next.sourceScroll != 9 {
+		t.Fatalf("expected source scroll to clamp at rendered bottom offset 9, got %d", next.sourceScroll)
+	}
+}
+
+func TestSourceViewScrollsWrappedContentByRenderedRows(t *testing.T) {
+	t.Parallel()
+
+	longLine := strings.Repeat("wrapped content ", 20)
+	m := model{
+		phase: phaseSource,
+		width: 24,
+		height: 12,
+		sourceLines: []string{
+			longLine,
+			longLine,
+			longLine,
+		},
+	}
+
+	initial := m.renderSourceView()
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next := nextModel.(model)
+
 	if next.sourceScroll == 0 {
-		t.Fatalf("expected source scroll to advance")
+		t.Fatalf("expected wrapped source scroll to advance")
+	}
+
+	after := next.renderSourceView()
+	if after == initial {
+		t.Fatalf("expected rendered source view to change after scrolling wrapped content")
+	}
+}
+
+func TestSourceViewHighlightsMarkdownSyntax(t *testing.T) {
+	t.Parallel()
+
+	renderer := newSourceMarkdownRenderer(80)
+	for _, line := range []string{
+		"# Heading",
+		"> quoted `code`",
+		"- list item with **bold** and *italic*",
+	} {
+		rendered := renderer.renderLine(line)
+		if !strings.Contains(rendered, line) {
+			t.Fatalf("expected rendered line to retain %q", line)
+		}
+	}
+
+	rendered := renderer.renderLine("```go")
+	if !strings.Contains(rendered, "```go") {
+		t.Fatalf("expected rendered fence opener to retain content")
+	}
+	if !renderer.inFence {
+		t.Fatalf("expected renderer to enter fenced code block after opening fence")
+	}
+	rendered = renderer.renderLine("fmt.Println(\"hi\")")
+	if !strings.Contains(rendered, "fmt.Println(\"hi\")") {
+		t.Fatalf("expected rendered fenced content to retain content")
+	}
+	rendered = renderer.renderLine("```")
+	if !strings.Contains(rendered, "```") {
+		t.Fatalf("expected rendered fence closer to retain content")
+	}
+	if renderer.inFence {
+		t.Fatalf("expected renderer to exit fenced code block after closing fence")
+	}
+
+	rendered = renderer.renderLine("plain with `inline` and _emphasis_")
+	if !strings.Contains(rendered, "plain with `inline` and _emphasis_") {
+		t.Fatalf("expected rendered inline markdown to retain content")
+	}
+}
+
+func TestMarkdownLineDetectors(t *testing.T) {
+	t.Parallel()
+
+	if !isHeadingLine("# Heading") {
+		t.Fatalf("expected heading detector to match heading")
+	}
+	if !isBlockquoteLine("> quote") {
+		t.Fatalf("expected blockquote detector to match blockquote")
+	}
+	if !isListLine("- item") || !isListLine("1. item") {
+		t.Fatalf("expected list detector to match unordered and ordered lists")
+	}
+	if !isFenceLine("```go") || !isFenceLine("~~~") {
+		t.Fatalf("expected fence detector to match fenced code blocks")
 	}
 }
 
@@ -698,9 +825,9 @@ func setupBoardTestStore(t *testing.T) (string, *storage.Store) {
 	t.Helper()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("mkdir audit dir: %v", err)
+		t.Fatalf("mkdir archive dir: %v", err)
 	}
 	for _, name := range []string{"a.md", "b.md"} {
 		if err := os.WriteFile(filepath.Join(auditDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
@@ -712,8 +839,8 @@ func setupBoardTestStore(t *testing.T) (string, *storage.Store) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audits: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	return root, store

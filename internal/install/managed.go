@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	reasoningLogsBlockBegin = "<!-- REASONING-LOGS:BEGIN -->"
-	reasoningLogsBlockEnd   = "<!-- REASONING-LOGS:END -->"
+	reasoningAuditBlockBegin = "<!-- REASONING-AUDIT:BEGIN -->"
+	reasoningAuditBlockEnd   = "<!-- REASONING-AUDIT:END -->"
 )
 
-var reasoningLogsBlockPattern = regexp.MustCompile(`(?s)` + regexp.QuoteMeta(reasoningLogsBlockBegin) + `.*?` + regexp.QuoteMeta(reasoningLogsBlockEnd))
+var reasoningAuditBlockPattern = regexp.MustCompile(`(?s)` + regexp.QuoteMeta(reasoningAuditBlockBegin) + `.*?` + regexp.QuoteMeta(reasoningAuditBlockEnd))
 
 // NormalizeManagedContent returns the file content that reasond expects after applying
 // its managed-file rules to the current content.
@@ -53,11 +53,11 @@ func managedFileKind(targetPath string) managedKind {
 
 func normalizeContextFile(existing []byte, expected []byte) []byte {
 	body := strings.TrimSpace(string(expected))
-	block := reasoningLogsBlockBegin + "\n" + body + "\n" + reasoningLogsBlockEnd
+	block := reasoningAuditBlockBegin + "\n" + body + "\n" + reasoningAuditBlockEnd
 
 	content := strings.TrimRight(string(existing), "\n\t ")
-	if reasoningLogsBlockPattern.MatchString(content) {
-		content = reasoningLogsBlockPattern.ReplaceAllString(content, block)
+	if reasoningAuditBlockPattern.MatchString(content) {
+		content = reasoningAuditBlockPattern.ReplaceAllString(content, block)
 		if strings.TrimSpace(content) == "" {
 			return []byte(block + "\n")
 		}

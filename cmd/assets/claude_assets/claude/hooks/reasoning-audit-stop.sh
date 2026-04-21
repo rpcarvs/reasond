@@ -10,10 +10,13 @@ if [[ -z "$AUDIT_DIR" ]]; then
   exit 0
 fi
 
-AUDIT_DIR="$AUDIT_DIR/reasoning_logs"
+AUDIT_DIR="$AUDIT_DIR/.reasond_tmp"
+ARCHIVE_DIR="${CLAUDE_PROJECT_DIR}/.reasond/reasond_audits"
 if [[ ! -d "$AUDIT_DIR" ]]; then
   exit 0
 fi
+
+mkdir -p "$ARCHIVE_DIR"
 
 PENDING="$AUDIT_DIR/.pending_prompt"
 CONTROL="$AUDIT_DIR/.control"
@@ -37,6 +40,7 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 TARGET_BASENAME=$(basename "$TARGET")
+ARCHIVE_TARGET="$ARCHIVE_DIR/$TARGET_BASENAME"
 
 # Prepend prompts if we have any and the file hasn't been stamped yet
 if [[ -f "$PENDING" ]] && ! grep -q '^# User Prompt' "$TARGET" 2>/dev/null; then
@@ -48,10 +52,20 @@ if [[ -f "$PENDING" ]] && ! grep -q '^# User Prompt' "$TARGET" 2>/dev/null; then
     cat "$TARGET"
   } >"$TMPFILE"
   mv "$TMPFILE" "$TARGET"
-  rm -f "$PENDING"
+fi
+
+if [[ -e "$ARCHIVE_TARGET" ]]; then
+  if ! cmp -s "$TARGET" "$ARCHIVE_TARGET"; then
+    exit 1
+  fi
+else
+  TMP_ARCHIVE=$(mktemp "$ARCHIVE_DIR/.archive.XXXXXX")
+  cp "$TARGET" "$TMP_ARCHIVE"
+  mv "$TMP_ARCHIVE" "$ARCHIVE_TARGET"
 fi
 
 # Mark this file as processed
 echo "$TARGET_BASENAME" >>"$CONTROL"
+rm -f "$PENDING"
 
 exit 0

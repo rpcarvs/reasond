@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rpcarvs/reasond/internal/judge"
+	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/storage"
 )
 
@@ -43,9 +44,9 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 
 	files := map[string]string{
@@ -69,8 +70,8 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	var updates []ProgressUpdate
@@ -143,9 +144,9 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 
 	for _, name := range []string{"a.md", "b.md", "c.md", "d.md"} {
@@ -164,8 +165,8 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	runner := &measuringRunner{delay: 40 * time.Millisecond}
@@ -191,9 +192,9 @@ func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# issue\n"), 0o644); err != nil {
 		t.Fatalf("write one.md: %v", err)
@@ -209,8 +210,8 @@ func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	processor := &Processor{
@@ -266,9 +267,9 @@ func TestProcessUnprocessedRejectsOverlappingRuns(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# one\n"), 0o644); err != nil {
 		t.Fatalf("write one.md: %v", err)
@@ -284,8 +285,8 @@ func TestProcessUnprocessedRejectsOverlappingRuns(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	runner := &blockingRunner{
@@ -341,9 +342,9 @@ func TestProcessUnprocessedStopsSchedulingNewWorkAfterCancel(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	auditDir := filepath.Join(root, "reasoning_logs")
+	auditDir := appRuntime.ArchivePath(root)
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
-		t.Fatalf("create audit dir: %v", err)
+		t.Fatalf("create archive dir: %v", err)
 	}
 
 	for _, name := range []string{"a.md", "b.md", "c.md", "d.md"} {
@@ -362,8 +363,8 @@ func TestProcessUnprocessedStopsSchedulingNewWorkAfterCancel(t *testing.T) {
 		}
 	}()
 
-	if _, err := store.SyncReasoningLogs(); err != nil {
-		t.Fatalf("sync audit files: %v", err)
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
 	}
 
 	runner := &cancelAwareRunner{ready: make(chan struct{})}
