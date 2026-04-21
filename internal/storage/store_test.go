@@ -1,13 +1,17 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
-	"rdit/internal/testutil"
+	"github.com/rpcarvs/rdit/internal/testutil"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
@@ -43,6 +47,23 @@ func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
 	}
 	if findingsTable != "audit_findings" {
 		t.Fatalf("expected audit_findings table, got %q", findingsTable)
+	}
+	for _, table := range []string{
+		"audit_runs_codex",
+		"audit_runs_claude",
+		"audit_findings_codex",
+		"audit_findings_claude",
+	} {
+		var name string
+		if err := store.DB().QueryRow(
+			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+			table,
+		).Scan(&name); err != nil {
+			t.Fatalf("query %s table: %v", table, err)
+		}
+		if name != table {
+			t.Fatalf("expected %s table, got %q", table, name)
+		}
 	}
 
 	expectedPath := filepath.Join(root, ".rdit", "audits_reports.db")
@@ -225,7 +246,7 @@ func TestPersistProcessedResultHandlesZeroAndMultipleFindings(t *testing.T) {
 
 	var zeroFindingCount int
 	if err := store.DB().QueryRow(
-		`SELECT COUNT(*) FROM audit_findings WHERE source_id = ?`,
+		`SELECT COUNT(*) FROM audit_findings_codex WHERE source_id = ?`,
 		zeroID,
 	).Scan(&zeroFindingCount); err != nil {
 		t.Fatalf("count zero findings: %v", err)
@@ -261,7 +282,7 @@ func TestPersistProcessedResultHandlesZeroAndMultipleFindings(t *testing.T) {
 
 	var multiFindingCount int
 	if err := store.DB().QueryRow(
-		`SELECT COUNT(*) FROM audit_findings WHERE source_id = ?`,
+		`SELECT COUNT(*) FROM audit_findings_claude WHERE source_id = ?`,
 		multiID,
 	).Scan(&multiFindingCount); err != nil {
 		t.Fatalf("count multi findings: %v", err)
@@ -341,7 +362,10 @@ func TestQueryMethodsExposePendingSourcesAndBoardData(t *testing.T) {
 		t.Fatalf("expected pending.md to remain unprocessed, got %+v", pending)
 	}
 
-	board, err := store.ListBoardFindings()
+	board, err := store.ListBoardFindingsForFilter(BoardFilter{
+		Provider:   JudgeProviderClaude,
+		IncludeAll: true,
+	})
 	if err != nil {
 		t.Fatalf("list board findings: %v", err)
 	}
@@ -349,12 +373,76 @@ func TestQueryMethodsExposePendingSourcesAndBoardData(t *testing.T) {
 		t.Fatalf("unexpected board findings: %+v", board)
 	}
 
-	detail, err := store.GetFindingDetail(board[0].ID)
+	detail, err := store.GetFindingDetailForProvider(JudgeProviderClaude, board[0].ID)
 	if err != nil {
 		t.Fatalf("get finding detail: %v", err)
 	}
 	if detail.SourcePath != "issue.md" || detail.JudgeProvider != "claude" || detail.JudgeModel != "claude-haiku-4-5" {
 		t.Fatalf("unexpected finding detail: %+v", detail)
+	}
+}
+
+func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	auditDir := filepath.Join(root, "reasoning_audits")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("create audit dir: %v", err)
+	}
+	for _, name := range []string{"one.md", "two.md"} {
+		if err := os.WriteFile(filepath.Join(auditDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	store, err := Open(root)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	if _, err := store.SyncReasoningAudits(); err != nil {
+		t.Fatalf("sync audit files: %v", err)
+	}
+
+	provider, ok, err := store.MostRecentProvider()
+	if err != nil {
+		t.Fatalf("most recent provider on empty runs: %v", err)
+	}
+	if ok || provider != "" {
+		t.Fatalf("expected no provider before runs, got ok=%t provider=%q", ok, provider)
+	}
+
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "one.md"),
+		JudgeProvider: JudgeProviderCodex,
+		JudgeModel:    "gpt-5.4-mini",
+	}); err != nil {
+		t.Fatalf("persist codex run: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "two.md"),
+		JudgeProvider: JudgeProviderClaude,
+		JudgeModel:    "claude-haiku-4-5",
+	}); err != nil {
+		t.Fatalf("persist claude run: %v", err)
+	}
+
+	provider, ok, err = store.MostRecentProvider()
+	if err != nil {
+		t.Fatalf("most recent provider: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected a provider result")
+	}
+	if provider != JudgeProviderClaude {
+		t.Fatalf("expected claude as latest provider, got %q", provider)
 	}
 }
 
@@ -369,6 +457,116 @@ func TestIsRetryableSQLError(t *testing.T) {
 	}
 	if isRetryableSQLError(fmt.Errorf("different error")) {
 		t.Fatalf("expected unrelated error to be non-retryable")
+	}
+}
+
+func TestOpenMigratesLegacyFindingsIntoProviderRunTables(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	runtimeDir := filepath.Join(root, ".rdit")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+
+	dbPath := filepath.Join(runtimeDir, "audits_reports.db")
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacyDB.Exec(`PRAGMA user_version = 2;`); err != nil {
+		t.Fatalf("set legacy schema version: %v", err)
+	}
+	legacySchema := []string{
+		`CREATE TABLE audit_sources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_path TEXT NOT NULL UNIQUE,
+			file_name TEXT NOT NULL,
+			content_hash TEXT NOT NULL DEFAULT '',
+			size_bytes INTEGER NOT NULL DEFAULT 0,
+			processed INTEGER NOT NULL DEFAULT 0 CHECK (processed IN (0, 1)),
+			detected_at TEXT NOT NULL,
+			processed_at TEXT,
+			judge_provider TEXT,
+			judge_model TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE audit_findings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			issue TEXT NOT NULL,
+			why_text TEXT NOT NULL,
+			how_text TEXT NOT NULL,
+			score REAL NOT NULL,
+			judge_provider TEXT NOT NULL,
+			judge_model TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+	}
+	for _, statement := range legacySchema {
+		if _, err := legacyDB.Exec(statement); err != nil {
+			t.Fatalf("apply legacy schema: %v", err)
+		}
+	}
+
+	if _, err := legacyDB.Exec(
+		`INSERT INTO audit_sources (id, file_path, file_name, content_hash, size_bytes, processed, detected_at, processed_at, judge_provider, judge_model, created_at, updated_at)
+		VALUES (1, 'legacy.md', 'legacy.md', 'hash', 42, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'claude', 'claude-haiku-4-5', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("insert legacy source: %v", err)
+	}
+
+	for _, title := range []string{"Legacy one", "Legacy two"} {
+		if _, err := legacyDB.Exec(
+			`INSERT INTO audit_findings (source_id, title, issue, why_text, how_text, score, judge_provider, judge_model, created_at, updated_at)
+			VALUES (1, ?, 'issue', 'why', 'how', 0.7, 'claude', 'claude-haiku-4-5', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+			title,
+		); err != nil {
+			t.Fatalf("insert legacy finding: %v", err)
+		}
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	store, err := Open(root)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	var version int
+	if err := store.DB().QueryRow(`PRAGMA user_version;`).Scan(&version); err != nil {
+		t.Fatalf("query version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("expected schema version %d, got %d", schemaVersion, version)
+	}
+
+	var runCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM audit_runs_claude;`).Scan(&runCount); err != nil {
+		t.Fatalf("count migrated runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("expected one migrated run, got %d", runCount)
+	}
+
+	board, err := store.ListBoardFindingsForFilter(BoardFilter{
+		Provider:   JudgeProviderClaude,
+		IncludeAll: false,
+	})
+	if err != nil {
+		t.Fatalf("list migrated board findings: %v", err)
+	}
+	if len(board) != 2 {
+		t.Fatalf("expected two migrated findings in latest view, got %+v", board)
 	}
 }
 

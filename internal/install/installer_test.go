@@ -5,10 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
-	assetbundle "rdit/cmd/assets"
-	"rdit/internal/testutil"
+	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
+	"github.com/rpcarvs/rdit/internal/testutil"
 )
 
 func TestInstallCodexIntoCleanFixture(t *testing.T) {
@@ -31,6 +32,9 @@ func TestInstallCodexIntoCleanFixture(t *testing.T) {
 	if !slices.Equal(result.Created, expectedCreated) {
 		t.Fatalf("unexpected created paths: %v", result.Created)
 	}
+	if len(result.Updated) != 0 {
+		t.Fatalf("expected no updated paths, got %v", result.Updated)
+	}
 
 	for _, relativePath := range expectedCreated {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relativePath))); err != nil {
@@ -39,22 +43,29 @@ func TestInstallCodexIntoCleanFixture(t *testing.T) {
 	}
 }
 
-func TestInstallDetectsConflictingManagedFile(t *testing.T) {
+func TestInstallMergesManagedBlockIntoExistingAgentsFile(t *testing.T) {
 	t.Parallel()
 
 	root := testutil.CopyFixtureTree(t, "repos/conflict-agents")
 
-	_, err := (Installer{}).Install(root, assetbundle.ProviderCodex)
-	if err == nil {
-		t.Fatalf("expected conflict error")
+	result, err := (Installer{}).Install(root, assetbundle.ProviderCodex)
+	if err != nil {
+		t.Fatalf("install codex assets: %v", err)
+	}
+	if !slices.Equal(result.Updated, []string{"AGENTS.md"}) {
+		t.Fatalf("unexpected updated paths: %v", result.Updated)
 	}
 
-	var conflictErr *ConflictError
-	if !errors.As(err, &conflictErr) {
-		t.Fatalf("expected ConflictError, got %T", err)
+	content, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
 	}
-	if len(conflictErr.Paths) != 1 || conflictErr.Paths[0] != "AGENTS.md" {
-		t.Fatalf("unexpected conflict paths: %v", conflictErr.Paths)
+	text := string(content)
+	if !strings.Contains(text, "# Custom Agent Rules") {
+		t.Fatalf("expected original AGENTS content to be preserved")
+	}
+	if strings.Count(text, reasoningAuditsBlockBegin) != 1 {
+		t.Fatalf("expected one managed reasoning audits block, got %d", strings.Count(text, reasoningAuditsBlockBegin))
 	}
 }
 
@@ -79,5 +90,64 @@ func TestInstallAllowsCodexAndClaudeToCoexist(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relativePath))); err != nil {
 			t.Fatalf("stat coexistence path %q: %v", relativePath, err)
 		}
+	}
+}
+
+func TestInstallMergesExistingHookConfigWithoutDuplication(t *testing.T) {
+	t.Parallel()
+
+	root := testutil.CopyFixtureTree(t, "repos/partial-codex")
+
+	first, err := (Installer{}).Install(root, assetbundle.ProviderCodex)
+	if err != nil {
+		t.Fatalf("first install codex assets: %v", err)
+	}
+	if !slices.Contains(first.Updated, ".codex/hooks.json") {
+		t.Fatalf("expected hooks.json to be updated, got %v", first.Updated)
+	}
+
+	second, err := (Installer{}).Install(root, assetbundle.ProviderCodex)
+	if err != nil {
+		t.Fatalf("second install codex assets: %v", err)
+	}
+	if len(second.Updated) != 0 {
+		t.Fatalf("expected second install to be idempotent, got updated %v", second.Updated)
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, ".codex", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read hooks.json: %v", err)
+	}
+	text := string(content)
+	if strings.Count(text, "reasoning-audit-prompt.sh") != 1 {
+		t.Fatalf("expected one prompt hook entry, got %d", strings.Count(text, "reasoning-audit-prompt.sh"))
+	}
+	if strings.Count(text, "reasoning-audit-stop.sh") != 1 {
+		t.Fatalf("expected one stop hook entry, got %d", strings.Count(text, "reasoning-audit-stop.sh"))
+	}
+}
+
+func TestInstallDetectsInvalidManagedJSON(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o755); err != nil {
+		t.Fatalf("create .codex dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".codex", "hooks.json"), []byte("{invalid"), 0o644); err != nil {
+		t.Fatalf("write invalid hooks.json: %v", err)
+	}
+
+	_, err := (Installer{}).Install(root, assetbundle.ProviderCodex)
+	if err == nil {
+		t.Fatalf("expected conflict error")
+	}
+
+	var conflictErr *ConflictError
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("expected ConflictError, got %T", err)
+	}
+	if len(conflictErr.Paths) != 1 || conflictErr.Paths[0] != ".codex/hooks.json" {
+		t.Fatalf("unexpected conflict paths: %v", conflictErr.Paths)
 	}
 }

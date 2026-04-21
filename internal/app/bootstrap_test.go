@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	assetbundle "rdit/cmd/assets"
-	"rdit/internal/codexconfig"
-	"rdit/internal/integrity"
-	appRuntime "rdit/internal/runtime"
+	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
+	"github.com/rpcarvs/rdit/internal/codexconfig"
+	"github.com/rpcarvs/rdit/internal/integrity"
+	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
 )
 
 func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
@@ -36,6 +36,9 @@ func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
 	}
 	if _, err := os.Stat(databasePath); err != nil {
 		t.Fatalf("stat initialized database: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "reasoning_audits")); err != nil || !info.IsDir() {
+		t.Fatalf("expected reasoning_audits directory to exist, stat err=%v", err)
 	}
 
 	report, err := (integrity.Checker{}).Check(root)

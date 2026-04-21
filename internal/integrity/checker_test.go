@@ -3,12 +3,13 @@ package integrity
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	assetbundle "rdit/cmd/assets"
-	"rdit/internal/install"
-	appRuntime "rdit/internal/runtime"
-	"rdit/internal/storage"
+	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
+	"github.com/rpcarvs/rdit/internal/install"
+	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
+	"github.com/rpcarvs/rdit/internal/storage"
 )
 
 func TestCheckReportsHealthyCodexInstall(t *testing.T) {
@@ -96,6 +97,50 @@ func TestCheckReportsModifiedManagedFile(t *testing.T) {
 	}
 	if report.Healthy() {
 		t.Fatalf("expected overall report unhealthy after file drift")
+	}
+}
+
+func TestCheckReportsHealthyWithManagedBlockAndUserContent(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+
+	agentsContent := "# Existing Team Rules\n\nKeep responses short.\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agentsContent), 0o644); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
+
+	_, err := (install.Installer{}).Install(root, assetbundle.ProviderCodex)
+	if err != nil {
+		t.Fatalf("install codex assets: %v", err)
+	}
+
+	_, err = appRuntime.EnsureLayout(root)
+	if err != nil {
+		t.Fatalf("ensure runtime layout: %v", err)
+	}
+	store, err := storage.Open(root)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	report, err := (Checker{}).Check(root)
+	if err != nil {
+		t.Fatalf("check repo integrity: %v", err)
+	}
+	if !report.Providers[assetbundle.ProviderCodex].Healthy() {
+		t.Fatalf("expected codex provider healthy")
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(content), "# Existing Team Rules") {
+		t.Fatalf("expected original AGENTS content to be preserved")
 	}
 }
 

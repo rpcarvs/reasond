@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"rdit/internal/judge"
-	"rdit/internal/storage"
+	"github.com/rpcarvs/rdit/internal/judge"
+	"github.com/rpcarvs/rdit/internal/storage"
 )
 
 const (
@@ -56,6 +56,34 @@ func (p *Processor) ProcessUnprocessed(
 	model string,
 	progress func(ProgressUpdate),
 ) (BatchResult, error) {
+	sources, err := p.Store.ListUnprocessedSources()
+	if err != nil {
+		return BatchResult{}, err
+	}
+	return p.processSources(ctx, provider, model, sources, progress)
+}
+
+// ProcessAllIndexed evaluates every indexed audit source regardless of processed status.
+func (p *Processor) ProcessAllIndexed(
+	ctx context.Context,
+	provider string,
+	model string,
+	progress func(ProgressUpdate),
+) (BatchResult, error) {
+	sources, err := p.Store.ListAllSources()
+	if err != nil {
+		return BatchResult{}, err
+	}
+	return p.processSources(ctx, provider, model, sources, progress)
+}
+
+func (p *Processor) processSources(
+	ctx context.Context,
+	provider string,
+	model string,
+	sources []storage.SourceRow,
+	progress func(ProgressUpdate),
+) (BatchResult, error) {
 	if p == nil {
 		return BatchResult{}, fmt.Errorf("processor is required")
 	}
@@ -68,11 +96,6 @@ func (p *Processor) ProcessUnprocessed(
 	defer p.finish()
 
 	runner, err := p.runnerFor(provider)
-	if err != nil {
-		return BatchResult{}, err
-	}
-
-	sources, err := p.Store.ListUnprocessedSources()
 	if err != nil {
 		return BatchResult{}, err
 	}

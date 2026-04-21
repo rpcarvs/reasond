@@ -21,6 +21,7 @@ var GitIgnoreEntries = []string{
 // LayoutResult reports which runtime layout pieces were created or already present.
 type LayoutResult struct {
 	RuntimeDirCreated bool
+	AuditDirCreated   bool
 	GitIgnoreCreated  bool
 	GitIgnoreAdded    []string
 	GitIgnorePresent  []string
@@ -39,7 +40,16 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 		return LayoutResult{}, err
 	}
 
-	result := LayoutResult{RuntimeDirCreated: created}
+	auditDir := filepath.Join(targetDir, "reasoning_audits")
+	auditCreated, err := ensureDirectory(auditDir)
+	if err != nil {
+		return LayoutResult{}, err
+	}
+
+	result := LayoutResult{
+		RuntimeDirCreated: created,
+		AuditDirCreated:   auditCreated,
+	}
 
 	gitIgnorePath := filepath.Join(targetDir, ".gitignore")
 	gitIgnoreCreated, added, present, err := ensureGitIgnoreEntries(gitIgnorePath, GitIgnoreEntries)

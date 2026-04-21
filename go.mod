@@ -1,4 +1,4 @@
-module rdit
+module github.com/rpcarvs/rdit
 
 go 1.26.2
 

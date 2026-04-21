@@ -7,8 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	assetbundle "rdit/cmd/assets"
-	appRuntime "rdit/internal/runtime"
+	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
+	"github.com/rpcarvs/rdit/internal/install"
+	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
 )
 
 // Status describes whether an expected runtime or provider-managed file is present, missing, or drifted.
@@ -172,7 +173,7 @@ func checkProvider(rootDir string, provider assetbundle.Provider) (ProviderStatu
 		}
 
 		targetPath := filepath.Join(rootDir, filepath.FromSlash(file.TargetPath))
-		fileStatus, err := compareFile(targetPath, embedded)
+		fileStatus, err := compareFile(targetPath, file.TargetPath, embedded)
 		if err != nil {
 			return ProviderStatus{}, err
 		}
@@ -186,7 +187,7 @@ func checkProvider(rootDir string, provider assetbundle.Provider) (ProviderStatu
 	return status, nil
 }
 
-func compareFile(path string, expected []byte) (Status, error) {
+func compareFile(path string, relativePath string, expected []byte) (Status, error) {
 	actual, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -195,7 +196,12 @@ func compareFile(path string, expected []byte) (Status, error) {
 		return "", fmt.Errorf("read %q: %w", path, err)
 	}
 
-	if bytes.Equal(actual, expected) {
+	normalized, err := install.NormalizeManagedContent(relativePath, actual, expected)
+	if err != nil {
+		return StatusModified, nil
+	}
+
+	if bytes.Equal(actual, normalized) {
 		return StatusPresent, nil
 	}
 

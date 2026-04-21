@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	appRuntime "rdit/internal/runtime"
+	appRuntime "github.com/rpcarvs/rdit/internal/runtime"
 )
 
 // SchemaFileName is the runtime filename used for the shared structured-output schema.

@@ -10,13 +10,14 @@ import (
 	"slices"
 	"strings"
 
-	assetbundle "rdit/cmd/assets"
+	assetbundle "github.com/rpcarvs/rdit/cmd/assets"
 )
 
 type Status string
 
 const (
 	StatusCreate   Status = "create"
+	StatusUpdate   Status = "update"
 	StatusReuse    Status = "reuse"
 	StatusConflict Status = "conflict"
 )
@@ -28,6 +29,7 @@ type ItemResult struct {
 
 type Result struct {
 	Created   []string
+	Updated   []string
 	Reused    []string
 	Conflicts []string
 }
@@ -37,7 +39,8 @@ func (r Result) HasConflicts() bool {
 	return len(r.Conflicts) > 0
 }
 
-// ConflictError indicates that init cannot proceed without overwriting user files.
+// ConflictError indicates that init cannot proceed because an existing managed path
+// cannot be safely interpreted or merged.
 type ConflictError struct {
 	Paths []string
 }
@@ -48,7 +51,7 @@ func (e *ConflictError) Error() string {
 
 type Installer struct{}
 
-// Install copies the provider assets into targetDir without overwriting differing files.
+// Install copies or merges provider assets into targetDir using the managed-file rules.
 func (Installer) Install(targetDir string, provider assetbundle.Provider) (Result, error) {
 	files, err := assetbundle.FilesForProvider(provider)
 	if err != nil {
@@ -70,24 +73,40 @@ func (Installer) Install(targetDir string, provider assetbundle.Provider) (Resul
 		}
 
 		targetPath := filepath.Join(targetDir, filepath.FromSlash(file.TargetPath))
-		status, err := compareTarget(targetPath, content)
-		if err != nil {
-			return Result{}, err
-		}
+		status, mergedContent, err := compareTarget(targetPath, file.TargetPath, content)
 
 		switch status {
 		case StatusCreate:
+			if err != nil {
+				return Result{}, err
+			}
 			result.Created = append(result.Created, file.TargetPath)
 			planned = append(planned, plannedWrite{
 				path:    targetPath,
-				content: content,
+				content: mergedContent,
+				mode:    file.Mode,
+			})
+		case StatusUpdate:
+			if err != nil {
+				return Result{}, err
+			}
+			result.Updated = append(result.Updated, file.TargetPath)
+			planned = append(planned, plannedWrite{
+				path:    targetPath,
+				content: mergedContent,
 				mode:    file.Mode,
 			})
 		case StatusReuse:
+			if err != nil {
+				return Result{}, err
+			}
 			result.Reused = append(result.Reused, file.TargetPath)
 		case StatusConflict:
 			result.Conflicts = append(result.Conflicts, file.TargetPath)
 		default:
+			if err != nil {
+				return Result{}, err
+			}
 			return Result{}, fmt.Errorf("unsupported install status %q", status)
 		}
 	}
@@ -116,33 +135,43 @@ type plannedWrite struct {
 	mode    fs.FileMode
 }
 
-func compareTarget(targetPath string, expected []byte) (Status, error) {
-	info, err := os.Stat(targetPath)
+func compareTarget(absolutePath string, relativePath string, expected []byte) (Status, []byte, error) {
+	info, err := os.Stat(absolutePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return StatusCreate, nil
+			normalized, normalizeErr := NormalizeManagedContent(relativePath, nil, expected)
+			if normalizeErr != nil {
+				return StatusConflict, nil, fmt.Errorf("normalize %q: %w", relativePath, normalizeErr)
+			}
+			return StatusCreate, normalized, nil
 		}
-		return "", fmt.Errorf("stat %q: %w", targetPath, err)
+		return "", nil, fmt.Errorf("stat %q: %w", absolutePath, err)
 	}
 
 	if info.IsDir() {
-		return StatusConflict, nil
+		return StatusConflict, nil, nil
 	}
 
-	actual, err := os.ReadFile(targetPath)
+	actual, err := os.ReadFile(absolutePath)
 	if err != nil {
-		return "", fmt.Errorf("read existing file %q: %w", targetPath, err)
+		return "", nil, fmt.Errorf("read existing file %q: %w", absolutePath, err)
 	}
 
-	if bytes.Equal(actual, expected) {
-		return StatusReuse, nil
+	normalized, err := NormalizeManagedContent(relativePath, actual, expected)
+	if err != nil {
+		return StatusConflict, nil, fmt.Errorf("normalize %q: %w", relativePath, err)
 	}
 
-	return StatusConflict, nil
+	if bytes.Equal(actual, normalized) {
+		return StatusReuse, normalized, nil
+	}
+
+	return StatusUpdate, normalized, nil
 }
 
 func sortResult(result *Result) {
 	slices.Sort(result.Created)
+	slices.Sort(result.Updated)
 	slices.Sort(result.Reused)
 	slices.Sort(result.Conflicts)
 }

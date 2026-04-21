@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"rdit/cmd"
+	"github.com/rpcarvs/rdit/cmd"
 )
 
 func main() {

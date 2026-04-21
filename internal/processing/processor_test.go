@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"rdit/internal/judge"
-	"rdit/internal/storage"
+	"github.com/rpcarvs/rdit/internal/judge"
+	"github.com/rpcarvs/rdit/internal/storage"
 )
 
 type fakeRunner struct{}
@@ -181,6 +181,67 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 	}
 	if runner.maxSeen < 2 {
 		t.Fatalf("expected concurrent judge execution, max overlap was %d", runner.maxSeen)
+	}
+}
+
+func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	auditDir := filepath.Join(root, "reasoning_audits")
+	if err := os.MkdirAll(auditDir, 0o755); err != nil {
+		t.Fatalf("create audit dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# issue\n"), 0o644); err != nil {
+		t.Fatalf("write one.md: %v", err)
+	}
+
+	store, err := storage.Open(root)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	if _, err := store.SyncReasoningAudits(); err != nil {
+		t.Fatalf("sync audit files: %v", err)
+	}
+
+	processor := &Processor{
+		Store:       store,
+		CodexRunner: fakeRunner{},
+	}
+	if _, err := processor.ProcessUnprocessed(context.Background(), ProviderCodex, "gpt-5.4-mini", nil); err != nil {
+		t.Fatalf("initial process unprocessed: %v", err)
+	}
+
+	firstPass, err := store.ListBoardFindingsForFilter(storage.BoardFilter{
+		Provider:   storage.JudgeProviderCodex,
+		IncludeAll: true,
+	})
+	if err != nil {
+		t.Fatalf("list first pass findings: %v", err)
+	}
+	if len(firstPass) != 1 {
+		t.Fatalf("expected one finding after first pass, got %+v", firstPass)
+	}
+
+	if _, err := processor.ProcessAllIndexed(context.Background(), ProviderCodex, "gpt-5.4", nil); err != nil {
+		t.Fatalf("process all indexed: %v", err)
+	}
+
+	allRuns, err := store.ListBoardFindingsForFilter(storage.BoardFilter{
+		Provider:   storage.JudgeProviderCodex,
+		IncludeAll: true,
+	})
+	if err != nil {
+		t.Fatalf("list all runs findings: %v", err)
+	}
+	if len(allRuns) != 2 {
+		t.Fatalf("expected two findings across reruns, got %+v", allRuns)
 	}
 }
 
