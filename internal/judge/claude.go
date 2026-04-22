@@ -11,8 +11,7 @@ import (
 
 // ClaudeRunner executes Claude Code in print mode for structured judging.
 type ClaudeRunner struct {
-	BinaryPath    string
-	FallbackModel string
+	BinaryPath string
 }
 
 type claudePrintEnvelope struct {
@@ -41,9 +40,6 @@ func (r ClaudeRunner) Run(ctx context.Context, rootDir, model, auditMarkdown str
 		"--json-schema", Schema(),
 		"--no-session-persistence",
 		"--output-format", "json",
-	}
-	if strings.TrimSpace(r.FallbackModel) != "" {
-		args = append(args, "--fallback-model", r.FallbackModel)
 	}
 	args = append(args, BuildPrompt(auditMarkdown))
 

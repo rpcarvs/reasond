@@ -56,7 +56,7 @@ printf '{"findings":[{"title":"A","issue":"B","why":"C","how":"D","score":0.6}]}
 		context.Background(),
 		root,
 		"gpt-5.4-mini",
-		"# User Prompt\n\nDo it.\n\n# Reasoning\n\nThe agent did it.",
+		"# User Prompt\n\nDo it.\n\n# Reasoning by Codex\n\nThe agent did it.",
 	)
 	if err != nil {
 		t.Fatalf("run codex runner: %v", err)

@@ -32,7 +32,8 @@ func TestSchemaIsValidAndWritable(t *testing.T) {
 func TestBuildPromptAllowsZeroFindingsAndIncludesAudit(t *testing.T) {
 	t.Parallel()
 
-	prompt := BuildPrompt("# User Prompt\n\nDo the task.\n\n# Reasoning\n\nThe agent did X.")
+	audit := "# User Prompt\n\nDo the task.\n\n# Reasoning by Codex\n\nThe agent did X."
+	prompt := BuildPrompt(audit)
 
 	if !strings.Contains(prompt, `{"findings":[]}`) {
 		t.Fatalf("expected prompt to include zero-findings example")
@@ -40,7 +41,7 @@ func TestBuildPromptAllowsZeroFindingsAndIncludesAudit(t *testing.T) {
 	if !strings.Contains(prompt, "Do not invent issues") {
 		t.Fatalf("expected prompt to forbid fabricated issues")
 	}
-	if !strings.Contains(prompt, "# Reasoning") {
+	if !strings.Contains(prompt, audit) {
 		t.Fatalf("expected prompt to include audit log contents")
 	}
 }

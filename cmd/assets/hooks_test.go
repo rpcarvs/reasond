@@ -43,7 +43,7 @@ func TestCodexStopHookPrependsPromptAndArchivesAudit(t *testing.T) {
 	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
 		t.Fatalf("create staging dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(stagingDir, "123.md"), []byte("# Reasoning\nbody\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stagingDir, "123.md"), []byte("# Reasoning by Codex\nbody\n"), 0o644); err != nil {
 		t.Fatalf("write staged audit: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(stagingDir, ".pending_prompt"), []byte("prompt text\n\n"), 0o644); err != nil {
@@ -61,7 +61,7 @@ func TestCodexStopHookPrependsPromptAndArchivesAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read staged audit: %v", err)
 	}
-	expected := "# User Prompt\n\nprompt text\n\n# Reasoning\nbody\n"
+	expected := "# User Prompt\n\nprompt text\n\n# Reasoning by Codex\nbody\n"
 	if string(stagedContent) != expected {
 		t.Fatalf("unexpected staged audit contents: %q", string(stagedContent))
 	}

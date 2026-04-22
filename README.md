@@ -36,6 +36,27 @@ If `reasond` is not found after install, add `$(go env GOPATH)/bin` to your `PAT
 echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc
 ```
 
+## System dependencies
+
+`reasond` relies on common UNIX command-line programs. The Go binary itself does not require an external `sqlite3` executable, but the installed provider hooks and skills do require these tools to exist on `PATH`.
+
+Required for normal repository use:
+
+- `bash`
+- `git`
+- `jq`
+- `uuidgen`
+- `tr`
+
+Provider-specific CLIs:
+
+- `codex` if you install or run the Codex integration
+- `claude` if you install or run the Claude Code integration
+
+Install/build dependency:
+
+- `go` if you install `reasond` with `go install` (for now, maybe another installation method later on)
+
 ## Install behavior
 
 `reasond` manages repository-local files for the selected provider:
@@ -49,7 +70,7 @@ echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc
 Install is merge-safe and idempotent:
 
 - Managed blocks in `AGENTS.md` and `CLAUDE.md` are upserted between `REASONING-AUDIT` markers.
-- Managed JSON files such as provider settings and hooks are merged instead of blindly overwritten.
+- Managed JSON files such as provider settings and hooks are merged.
 - Provider-managed scripts and skill files are refreshed in place without duplicating entries.
 - Codex hook enablement is checked before install proceeds.
 

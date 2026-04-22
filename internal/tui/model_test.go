@@ -86,7 +86,7 @@ func TestReloadStateOnHealthyRepoWithPendingAuditQueuesPrompt(t *testing.T) {
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create archive dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning\n\nfixture\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning by Codex\n\nfixture\n"), 0o644); err != nil {
 		t.Fatalf("write audit file: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestAuditPromptDeclineMovesToBoard(t *testing.T) {
 	if err := os.MkdirAll(auditDir, 0o755); err != nil {
 		t.Fatalf("create archive dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning\n\nfixture\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(auditDir, "one.md"), []byte("# Reasoning by Codex\n\nfixture\n"), 0o644); err != nil {
 		t.Fatalf("write audit file: %v", err)
 	}
 

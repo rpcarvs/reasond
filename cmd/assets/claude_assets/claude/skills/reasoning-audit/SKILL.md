@@ -19,13 +19,13 @@ After you finish responding to the user's request, **always** create an audit
 file in `.reasond_tmp/`. Get the filename:
 
 ```bash
-date +%s
+uuidgen | tr '[:upper:]' '[:lower:]'
 ```
 
-Then create `.reasond_tmp/<timestamp>.md` with **only** this content:
+Then create `.reasond_tmp/<uuid>.md` with **only** this content:
 
 ```markdown
-# Reasoning
+# Reasoning by Claude
 
 <Your faithful reconstruction. This section must:
 
