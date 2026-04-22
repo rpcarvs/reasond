@@ -41,3 +41,18 @@ func TestRootHelpFocusesOnTUIWorkflow(t *testing.T) {
 		}
 	}
 }
+
+func TestFangOptionsOmitVersionOverrideByDefault(t *testing.T) {
+	t.Parallel()
+
+	originalCommit := commit
+	commit = ""
+	t.Cleanup(func() {
+		commit = originalCommit
+	})
+
+	options := fangOptions()
+	if len(options) != 0 {
+		t.Fatalf("expected no Fang options when commit is empty, got %d", len(options))
+	}
+}

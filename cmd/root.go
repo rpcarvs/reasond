@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	version = "dev"
-	commit  = ""
+	commit = ""
 )
 
 func newRootCmd() *cobra.Command {
@@ -48,7 +47,13 @@ func Execute() error {
 	return fang.Execute(
 		context.Background(),
 		rootCmd,
-		fang.WithVersion(version),
-		fang.WithCommit(commit),
+		fangOptions()...,
 	)
+}
+
+func fangOptions() []fang.Option {
+	if commit == "" {
+		return nil
+	}
+	return []fang.Option{fang.WithCommit(commit)}
 }
