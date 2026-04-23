@@ -8,13 +8,19 @@ It installs repository-local audit hooks for Codex and Claude Code, indexes the 
 - Local repository auditing for coding-agent reasoning traces
 - TUI-first workflow for installation, processing, and review
 - Dual-provider judging with separate Codex and Claude result boards
+- No extra APIs usage or access tokens, just use your already installed Codex or Claude Code.
+- Defaults to the cheapest models (Haiku, GPT-Mini, etc.). They work great for this task.
 - Immutable archived-audit indexing with SQLite-backed findings
 - Merge-safe local install for managed hooks, skills, and context blocks
 
 ## Quick start
 
 ```bash
-# Install directly from GitHub:
+# Install with Homebrew:
+brew tap rpcarvs/reasond
+brew install reasond
+
+# Or install directly from GitHub:
 go install github.com/rpcarvs/reasond@latest
 
 # Check the installed version:
@@ -38,24 +44,17 @@ echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc
 
 ## System dependencies
 
-`reasond` relies on common UNIX command-line programs. The Go binary itself does not require an external `sqlite3` executable, but the installed provider hooks and skills do require these tools to exist on `PATH`.
+`reasond` relies on common UNIX command-line programs.
 
 Required for normal repository use:
 
-- `bash`
-- `git`
 - `jq`
 - `uuidgen`
-- `tr`
 
 Provider-specific CLIs:
 
 - `codex` if you install or run the Codex integration
 - `claude` if you install or run the Claude Code integration
-
-Install/build dependency:
-
-- `go` if you install `reasond` with `go install` (for now, maybe another installation method later on)
 
 ## Install behavior
 
@@ -67,14 +66,7 @@ Install/build dependency:
 - `.reasond_tmp/`
 - `.gitignore` entries for `.reasond/` and `.reasond_tmp/`
 
-Install is merge-safe and idempotent:
-
-- Managed blocks in `AGENTS.md` and `CLAUDE.md` are upserted between `REASONING-AUDIT` markers.
-- Managed JSON files such as provider settings and hooks are merged.
-- Provider-managed scripts and skill files are refreshed in place without duplicating entries.
-- Codex hook enablement is checked before install proceeds.
-
-Both Codex and Claude assets can coexist in the same repository.
+Install is merge-safe and idempotent and both Codex and Claude assets can coexist in the same repository.
 
 ## Runtime layout
 
@@ -87,24 +79,7 @@ Both Codex and Claude assets can coexist in the same repository.
 - `.reasond_tmp/`
   Transient staging area where agents write new markdown before the stop hook archives it.
 
-## Storage model
-
-SQLite stores the audit pipeline in provider-aware tables:
-
-- `audit_sources`
-  One row per indexed markdown file under `.reasond/reasond_audits/`.
-- `audit_runs_codex`
-  One row per Codex judge run for a source file.
-- `audit_findings_codex`
-  Zero or more Codex findings for a Codex run.
-- `audit_runs_claude`
-  One row per Claude judge run for a source file.
-- `audit_findings_claude`
-  Zero or more Claude findings for a Claude run.
-
-Archived source files are immutable after indexing. If a file changes unexpectedly, it is treated as an integrity conflict instead of being overwritten.
-
-The board defaults to the most recently used provider and shows the latest run per source file for that provider. `a` toggles between latest-only and all runs. Raw judge output is not persisted; `reasond` stores only normalized findings in SQLite.
+The TUI board defaults to the most recently used provider and shows the latest run per source file for that provider. `a` toggles between latest-only and all runs. Raw judge output is not persisted; `reasond` stores only normalized findings in.
 
 ## Judge providers
 
@@ -115,15 +90,7 @@ The board defaults to the most recently used provider and shows the latest run p
 
 The TUI lets the user choose the judge provider and model independently of the provider that originally generated the archived audit markdown.
 
-## Core interactions
-
-```text
-reasond              Open the full-screen TUI
-reasond -v           Print version
-reasond --help       Show help
-```
-
-Board keybindings:
+##  keybindings:
 
 - `up/down` or `j/k` move through findings
 - `enter` open the finding detail modal

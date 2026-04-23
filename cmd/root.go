@@ -39,7 +39,7 @@ Typical flow:
 }
 
 // Execute runs the CLI command tree.
-func Execute() error {
+func Execute(version string) error {
 	rootCmd := newRootCmd()
 	rootCmd.InitDefaultVersionFlag()
 	rootCmd.SetVersionTemplate("{{printf \"%s version %s\\n\" .Name .Version}}")
@@ -47,13 +47,17 @@ func Execute() error {
 	return fang.Execute(
 		context.Background(),
 		rootCmd,
-		fangOptions()...,
+		fangOptions(version)...,
 	)
 }
 
-func fangOptions() []fang.Option {
-	if commit == "" {
-		return nil
+func fangOptions(version string) []fang.Option {
+	var options []fang.Option
+	if version != "" {
+		options = append(options, fang.WithVersion(version))
 	}
-	return []fang.Option{fang.WithCommit(commit)}
+	if commit != "" {
+		options = append(options, fang.WithCommit(commit))
+	}
+	return options
 }

@@ -1,0 +1,37 @@
+class Reasond < Formula
+  desc "Local-first reasoning audit viewer for coding-agent sessions"
+  homepage "https://github.com/rpcarvs/reasond"
+  license "MIT"
+  version "__VERSION__"
+
+  depends_on "git"
+  depends_on "jq"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/rpcarvs/reasond/releases/download/v__VERSION__/reasond___VERSION___darwin_arm64.tar.gz"
+      sha256 "__DARWIN_ARM64_SHA256__"
+    else
+      url "https://github.com/rpcarvs/reasond/releases/download/v__VERSION__/reasond___VERSION___darwin_amd64.tar.gz"
+      sha256 "__DARWIN_AMD64_SHA256__"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/rpcarvs/reasond/releases/download/v__VERSION__/reasond___VERSION___linux_arm64.tar.gz"
+      sha256 "__LINUX_ARM64_SHA256__"
+    else
+      url "https://github.com/rpcarvs/reasond/releases/download/v__VERSION__/reasond___VERSION___linux_amd64.tar.gz"
+      sha256 "__LINUX_AMD64_SHA256__"
+    end
+  end
+
+  def install
+    bin.install "reasond"
+  end
+
+  test do
+    system "#{bin}/reasond", "-v"
+  end
+end

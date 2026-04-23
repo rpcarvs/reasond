@@ -51,8 +51,38 @@ func TestFangOptionsOmitVersionOverrideByDefault(t *testing.T) {
 		commit = originalCommit
 	})
 
-	options := fangOptions()
+	options := fangOptions("")
 	if len(options) != 0 {
 		t.Fatalf("expected no Fang options when commit is empty, got %d", len(options))
+	}
+}
+
+func TestFangOptionsIncludeVersionOverrideWhenProvided(t *testing.T) {
+	t.Parallel()
+
+	originalCommit := commit
+	commit = ""
+	t.Cleanup(func() {
+		commit = originalCommit
+	})
+
+	options := fangOptions("v1.2.3")
+	if len(options) != 1 {
+		t.Fatalf("expected one Fang option when version is provided, got %d", len(options))
+	}
+}
+
+func TestFangOptionsIncludeVersionAndCommit(t *testing.T) {
+	t.Parallel()
+
+	originalCommit := commit
+	commit = "abcdef123456"
+	t.Cleanup(func() {
+		commit = originalCommit
+	})
+
+	options := fangOptions("v1.2.3")
+	if len(options) != 2 {
+		t.Fatalf("expected version and commit Fang options, got %d", len(options))
 	}
 }
