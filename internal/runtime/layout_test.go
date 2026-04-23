@@ -12,6 +12,9 @@ func TestEnsureLayoutUsesPartialFixtureIdempotently(t *testing.T) {
 	t.Parallel()
 
 	root := testutil.CopyFixtureTree(t, "repos/partial-codex")
+	if err := os.MkdirAll(filepath.Join(root, ".reasond"), 0o755); err != nil {
+		t.Fatalf("seed existing .reasond directory: %v", err)
+	}
 
 	result, err := EnsureLayout(root)
 	if err != nil {
