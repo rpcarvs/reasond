@@ -27,6 +27,7 @@ func TestInstallCodexIntoCleanFixture(t *testing.T) {
 		".codex/hooks/reasoning-audit-prompt.sh",
 		".codex/hooks/reasoning-audit-stop.sh",
 		".codex/skills/reasoning-audit/SKILL.md",
+		".codex/skills/reasoning-debug/SKILL.md",
 		"AGENTS.md",
 	}
 	if !slices.Equal(result.Created, expectedCreated) {
@@ -67,6 +68,9 @@ func TestInstallMergesManagedBlockIntoExistingAgentsFile(t *testing.T) {
 	if strings.Count(text, reasoningAuditBlockBegin) != 1 {
 		t.Fatalf("expected one managed reasoning audit block, got %d", strings.Count(text, reasoningAuditBlockBegin))
 	}
+	if strings.Count(text, reasoningDebugBlockBegin) != 1 {
+		t.Fatalf("expected one managed reasoning debug block, got %d", strings.Count(text, reasoningDebugBlockBegin))
+	}
 }
 
 func TestInstallAllowsCodexAndClaudeToCoexist(t *testing.T) {
@@ -90,6 +94,25 @@ func TestInstallAllowsCodexAndClaudeToCoexist(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(relativePath))); err != nil {
 			t.Fatalf("stat coexistence path %q: %v", relativePath, err)
 		}
+	}
+
+	claudeContent, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if strings.TrimSpace(string(claudeContent)) != "See [AGENTS.md](./AGENTS.md)" {
+		t.Fatalf("expected CLAUDE.md pointer, got %q", string(claudeContent))
+	}
+
+	agentsContent, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if strings.Count(string(agentsContent), reasoningAuditBlockBegin) != 1 {
+		t.Fatalf("expected one reasoning audit block in AGENTS.md")
+	}
+	if strings.Count(string(agentsContent), reasoningDebugBlockBegin) != 1 {
+		t.Fatalf("expected one reasoning debug block in AGENTS.md")
 	}
 }
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/fang"
@@ -14,6 +15,8 @@ var (
 	commit = ""
 )
 
+var runTUI = tui.Run
+
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reasond",
@@ -21,21 +24,39 @@ func newRootCmd() *cobra.Command {
 		Long: strings.TrimSpace(`
 Run reasond inside the repository you want to audit.
 
-Typical flow:
+Human setup:
   1. Start reasond in the target repository.
-  2. Press i in the TUI to install Codex or Claude assets.
+  2. Press i in the TUI to install Codex or Claude assets, or run reasond init.
   3. Run coding-agent sessions so audits are archived.
   4. Return to reasond to process and review archived audits.
+
+Agent flow:
+  reasond onboard    Print agent-facing workflow instructions.
+  reasond judge      Judge unprocessed archived audits with configured defaults.
+  reasond latest     Print findings from the latest judge run.
+  reasond show ID    Print one finding detail.
 `),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tui.Run(".")
+			return runRootTUI()
 		},
 	}
+	cmd.AddCommand(newInitCmd(), newOnboardCmd(), newJudgeCmd(), newLatestCmd(), newListCmd(), newShowCmd())
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.SetHelpCommand(&cobra.Command{Hidden: true})
 	return cmd
+}
+
+func runRootTUI() error {
+	rootDir, err := currentProjectDir()
+	if err != nil {
+		return err
+	}
+	if rootDir == "" {
+		return fmt.Errorf("git repository root was empty")
+	}
+	return runTUI(rootDir)
 }
 
 // Execute runs the CLI command tree.

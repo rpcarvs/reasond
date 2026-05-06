@@ -14,10 +14,12 @@ func TestClaudeRunnerParsesStructuredEnvelope(t *testing.T) {
 	root := t.TempDir()
 	binaryPath := filepath.Join(root, "fake-claude.sh")
 	argsPath := filepath.Join(root, "args.txt")
+	pwdPath := filepath.Join(root, "pwd.txt")
 
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
+pwd > "` + pwdPath + `"
 printf '%s\n' "$@" > "` + argsPath + `"
 printf '{"structured_output":{"findings":[{"title":"A","issue":"B","why":"C","how":"D","score":0.4}]}}'
 `
@@ -50,5 +52,30 @@ printf '{"structured_output":{"findings":[{"title":"A","issue":"B","why":"C","ho
 	}
 	if strings.Contains(string(argsContent), "--fallback-model") {
 		t.Fatalf("claude runner unexpectedly passed fallback model: %s", string(argsContent))
+	}
+	if strings.Contains(string(argsContent), "--bare") {
+		t.Fatalf("claude runner used --bare, which disables OAuth/keychain login: %s", string(argsContent))
+	}
+	for _, expected := range []string{
+		"--disable-slash-commands",
+		"--tools",
+		"--mcp-config",
+		"--strict-mcp-config",
+		"# User Prompt",
+	} {
+		if !strings.Contains(string(argsContent), expected) {
+			t.Fatalf("expected claude args to contain %q in:\n%s", expected, string(argsContent))
+		}
+	}
+	if strings.Contains(string(argsContent), root) {
+		t.Fatalf("claude args leaked repository root:\n%s", string(argsContent))
+	}
+
+	pwdContent, err := os.ReadFile(pwdPath)
+	if err != nil {
+		t.Fatalf("read captured pwd: %v", err)
+	}
+	if strings.TrimSpace(string(pwdContent)) == root {
+		t.Fatalf("claude runner executed inside repository root")
 	}
 }

@@ -13,9 +13,22 @@ import (
 const (
 	reasoningAuditBlockBegin = "<!-- REASONING-AUDIT:BEGIN -->"
 	reasoningAuditBlockEnd   = "<!-- REASONING-AUDIT:END -->"
+	reasoningDebugBlockBegin = "<!-- REASONING-DEBUG:BEGIN -->"
+	reasoningDebugBlockEnd   = "<!-- REASONING-DEBUG:END -->"
 )
 
-var reasoningAuditBlockPattern = regexp.MustCompile(`(?s)` + regexp.QuoteMeta(reasoningAuditBlockBegin) + `.*?` + regexp.QuoteMeta(reasoningAuditBlockEnd))
+var managedContextBlocks = []managedContextBlock{
+	{
+		pattern: regexp.MustCompile(`(?s)` + regexp.QuoteMeta(reasoningAuditBlockBegin) + `.*?` + regexp.QuoteMeta(reasoningAuditBlockEnd)),
+	},
+	{
+		pattern: regexp.MustCompile(`(?s)` + regexp.QuoteMeta(reasoningDebugBlockBegin) + `.*?` + regexp.QuoteMeta(reasoningDebugBlockEnd)),
+	},
+}
+
+type managedContextBlock struct {
+	pattern *regexp.Regexp
+}
 
 // NormalizeManagedContent returns the file content that reasond expects after applying
 // its managed-file rules to the current content.
@@ -42,7 +55,7 @@ func managedFileKind(targetPath string) managedKind {
 	clean := filepath.ToSlash(targetPath)
 
 	switch clean {
-	case "AGENTS.md", "CLAUDE.md":
+	case "AGENTS.md":
 		return managedFileContext
 	case ".codex/hooks.json", ".claude/settings.json":
 		return managedFileHookConfig
@@ -52,22 +65,47 @@ func managedFileKind(targetPath string) managedKind {
 }
 
 func normalizeContextFile(existing []byte, expected []byte) []byte {
-	body := strings.TrimSpace(string(expected))
-	block := reasoningAuditBlockBegin + "\n" + body + "\n" + reasoningAuditBlockEnd
+	blocks := expectedContextBlocks(expected)
 
 	content := strings.TrimRight(string(existing), "\n\t ")
-	if reasoningAuditBlockPattern.MatchString(content) {
-		content = reasoningAuditBlockPattern.ReplaceAllString(content, block)
-		if strings.TrimSpace(content) == "" {
-			return []byte(block + "\n")
+	for _, block := range blocks {
+		if block.pattern.MatchString(content) {
+			content = block.pattern.ReplaceAllString(content, block.content)
+			continue
 		}
-		return []byte(strings.TrimRight(content, "\n\t ") + "\n")
+		if strings.TrimSpace(content) == "" {
+			content = block.content
+			continue
+		}
+		content = strings.TrimRight(content, "\n\t ") + "\n\n" + block.content
 	}
 
-	if strings.TrimSpace(content) == "" {
-		return []byte(block + "\n")
+	return []byte(strings.TrimRight(content, "\n\t ") + "\n")
+}
+
+type expectedContextBlock struct {
+	content string
+	pattern *regexp.Regexp
+}
+
+func expectedContextBlocks(expected []byte) []expectedContextBlock {
+	body := strings.TrimSpace(string(expected))
+	if !strings.Contains(body, reasoningAuditBlockBegin) {
+		body = reasoningAuditBlockBegin + "\n" + body + "\n" + reasoningAuditBlockEnd
 	}
-	return []byte(content + "\n\n" + block + "\n")
+
+	blocks := make([]expectedContextBlock, 0, len(managedContextBlocks))
+	for _, block := range managedContextBlocks {
+		content := block.pattern.FindString(body)
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		blocks = append(blocks, expectedContextBlock{
+			content: content,
+			pattern: block.pattern,
+		})
+	}
+	return blocks
 }
 
 func normalizeHookConfig(existing []byte, expected []byte) ([]byte, error) {

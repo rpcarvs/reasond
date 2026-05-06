@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -20,18 +19,22 @@ func (r CodexRunner) Run(ctx context.Context, rootDir, model, auditMarkdown stri
 	if strings.TrimSpace(model) == "" {
 		return Response{}, fmt.Errorf("codex model is required")
 	}
+	_ = rootDir
 
-	rootDir, err := filepath.Abs(rootDir)
+	judgeDir, err := os.MkdirTemp("", "reasond-codex-judge-*")
 	if err != nil {
-		return Response{}, fmt.Errorf("resolve root dir: %w", err)
+		return Response{}, fmt.Errorf("create isolated codex judge directory: %w", err)
 	}
+	defer func() {
+		_ = os.RemoveAll(judgeDir)
+	}()
 
-	schemaPath, err := WriteSchema(rootDir)
+	schemaPath, err := WriteSchema(judgeDir)
 	if err != nil {
 		return Response{}, err
 	}
 
-	outputFile, err := os.CreateTemp("", "reasond-codex-last-*.json")
+	outputFile, err := os.CreateTemp(judgeDir, "reasond-codex-last-*.json")
 	if err != nil {
 		return Response{}, fmt.Errorf("create codex output temp file: %w", err)
 	}
@@ -53,12 +56,28 @@ func (r CodexRunner) Run(ctx context.Context, rootDir, model, auditMarkdown stri
 		binaryPath,
 		"exec",
 		"--ephemeral",
+		"--disable", "apps",
+		"--disable", "browser_use",
+		"--disable", "codex_hooks",
+		"--disable", "computer_use",
+		"--disable", "multi_agent",
+		"--disable", "plugins",
+		"--disable", "shell_tool",
+		"--disable", "skill_mcp_dependency_install",
+		"--disable", "tool_call_mcp_elicitation",
+		"--disable", "tool_search",
+		"--disable", "workspace_dependencies",
+		"--skip-git-repo-check",
+		"--ignore-user-config",
+		"--ignore-rules",
+		"--sandbox", "read-only",
+		"--cd", judgeDir,
 		"--model", model,
 		"--output-schema", schemaPath,
 		"--output-last-message", outputPath,
 		BuildPrompt(auditMarkdown),
 	)
-	cmd.Dir = rootDir
+	cmd.Dir = judgeDir
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 const (
 	JudgeProviderCodex  = "codex"
@@ -150,6 +151,7 @@ type PersistResultInput struct {
 	SourceID      int64
 	JudgeProvider string
 	JudgeModel    string
+	BatchID       int64
 	Findings      []FindingInput
 }
 
@@ -169,6 +171,7 @@ type SourceRow struct {
 // FindingSummary is the compact card payload shown in the board view.
 type FindingSummary struct {
 	ID         int64
+	Provider   string
 	Title      string
 	Score      float64
 	SourcePath string
@@ -178,18 +181,19 @@ type FindingSummary struct {
 
 // FindingDetail is the expanded detail payload shown when a board card is opened.
 type FindingDetail struct {
-	ID            int64
-	RunID         int64
-	SourceID      int64
-	SourcePath    string
-	Title         string
-	Issue         string
-	Why           string
-	How           string
-	Score         float64
-	JudgeProvider string
-	JudgeModel    string
-	ProcessedAt   sql.NullString
+	ID             int64
+	RunID          int64
+	SourceID       int64
+	SourcePath     string
+	SourceFullPath string
+	Title          string
+	Issue          string
+	Why            string
+	How            string
+	Score          float64
+	JudgeProvider  string
+	JudgeModel     string
+	ProcessedAt    sql.NullString
 }
 
 // BoardFilter defines provider and optional visibility constraints for board queries.
@@ -197,6 +201,34 @@ type BoardFilter struct {
 	Provider   string
 	FilePath   string
 	IncludeAll bool
+}
+
+// JudgeBatchInput describes one non-interactive or TUI judge invocation.
+type JudgeBatchInput struct {
+	JudgeProvider string
+	JudgeModel    string
+	Mode          string
+	Total         int
+}
+
+// FindingPublicID is the provider-qualified identifier exposed by agent CLI output.
+type FindingPublicID struct {
+	Provider string
+	ID       int64
+}
+
+// AgentFindingSummary is the compact finding row exposed to non-interactive CLI consumers.
+type AgentFindingSummary struct {
+	PublicID    string
+	ID          int64
+	Provider    string
+	Title       string
+	Score       float64
+	SourcePath  string
+	JudgeModel  string
+	RunID       int64
+	BatchID     int64
+	ProcessedAt sql.NullString
 }
 
 type providerRecency struct {
@@ -245,6 +277,98 @@ func (s *Store) SyncArchivedAudits() (SyncResult, error) {
 	return result, nil
 }
 
+// StartJudgeBatch records one judge invocation and returns its batch id.
+func (s *Store) StartJudgeBatch(input JudgeBatchInput) (int64, error) {
+	_, _, provider, err := providerTables(input.JudgeProvider)
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(input.JudgeModel) == "" {
+		return 0, fmt.Errorf("judge model is required")
+	}
+	if strings.TrimSpace(input.Mode) == "" {
+		return 0, fmt.Errorf("judge batch mode is required")
+	}
+	if input.Total < 0 {
+		return 0, fmt.Errorf("judge batch total cannot be negative")
+	}
+
+	now := utcNow()
+	var batchID int64
+	err = s.withWriteTx(func(tx *sql.Tx) error {
+		result, err := tx.Exec(
+			`INSERT INTO audit_judge_batches (
+				judge_provider,
+				judge_model,
+				mode,
+				total,
+				succeeded,
+				failed,
+				started_at,
+				created_at,
+				updated_at
+			) VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+			provider,
+			input.JudgeModel,
+			input.Mode,
+			input.Total,
+			now,
+			now,
+			now,
+		)
+		if err != nil {
+			return fmt.Errorf("insert judge batch: %w", err)
+		}
+		batchID, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("load judge batch id: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return batchID, nil
+}
+
+// FinishJudgeBatch records the terminal counts for one judge invocation.
+func (s *Store) FinishJudgeBatch(batchID int64, succeeded int, failed int) error {
+	if batchID <= 0 {
+		return fmt.Errorf("judge batch id is required")
+	}
+	if succeeded < 0 || failed < 0 {
+		return fmt.Errorf("judge batch counts cannot be negative")
+	}
+
+	now := utcNow()
+	return s.withWriteTx(func(tx *sql.Tx) error {
+		result, err := tx.Exec(
+			`UPDATE audit_judge_batches
+			SET succeeded = ?,
+				failed = ?,
+				completed_at = ?,
+				updated_at = ?
+			WHERE id = ?`,
+			succeeded,
+			failed,
+			now,
+			now,
+			batchID,
+		)
+		if err != nil {
+			return fmt.Errorf("finish judge batch %d: %w", batchID, err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("load judge batch update count: %w", err)
+		}
+		if affected == 0 {
+			return fmt.Errorf("judge batch %d not found", batchID)
+		}
+		return nil
+	})
+}
+
 // PersistProcessedResult stores judge findings and marks the source row processed.
 func (s *Store) PersistProcessedResult(input PersistResultInput) error {
 	runTable, findingsTable, provider, err := providerTables(input.JudgeProvider)
@@ -270,11 +394,13 @@ func (s *Store) PersistProcessedResult(input PersistResultInput) error {
 			fmt.Sprintf(`INSERT INTO %s (
 				source_id,
 				judge_model,
+				batch_id,
 				created_at,
 				updated_at
-			) VALUES (?, ?, ?, ?)`, runTable),
+			) VALUES (?, ?, ?, ?, ?)`, runTable),
 			input.SourceID,
 			input.JudgeModel,
+			nullableBatchID(input.BatchID),
 			now,
 			now,
 		)
@@ -437,7 +563,7 @@ func (s *Store) ListAllSources() ([]SourceRow, error) {
 
 // ListBoardFindingsForFilter returns board rows constrained by provider and optional file/latest filters.
 func (s *Store) ListBoardFindingsForFilter(filter BoardFilter) ([]FindingSummary, error) {
-	runTable, findingsTable, _, err := providerTables(filter.Provider)
+	runTable, findingsTable, normalizedProvider, err := providerTables(filter.Provider)
 	if err != nil {
 		return nil, err
 	}
@@ -492,6 +618,7 @@ func (s *Store) ListBoardFindingsForFilter(filter BoardFilter) ([]FindingSummary
 		); err != nil {
 			return nil, fmt.Errorf("scan board finding: %w", err)
 		}
+		finding.Provider = normalizedProvider
 		findings = append(findings, finding)
 	}
 
@@ -547,8 +674,61 @@ func (s *Store) GetFindingDetailForProvider(provider string, findingID int64) (F
 		return FindingDetail{}, fmt.Errorf("load finding %d: %w", findingID, err)
 	}
 	detail.JudgeProvider = normalizedProvider
+	detail.SourceFullPath = filepath.Join(appRuntime.ArchivePath(s.rootDir), filepath.FromSlash(detail.SourcePath))
 
 	return detail, nil
+}
+
+// ListLatestBatchFindings returns compact rows from the most recent completed judge batch.
+func (s *Store) ListLatestBatchFindings() ([]AgentFindingSummary, error) {
+	var batchID int64
+	var provider string
+	err := s.db.QueryRow(
+		`SELECT id, judge_provider
+		FROM audit_judge_batches
+		WHERE completed_at IS NOT NULL
+		ORDER BY id DESC
+		LIMIT 1`,
+	).Scan(&batchID, &provider)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load latest judge batch: %w", err)
+	}
+
+	return s.listAgentFindingsForProvider(provider, "WHERE r.batch_id = ?", []any{batchID})
+}
+
+// ListAllAgentFindings returns compact rows for all persisted judge findings.
+func (s *Store) ListAllAgentFindings() ([]AgentFindingSummary, error) {
+	var all []AgentFindingSummary
+	for _, provider := range []string{JudgeProviderCodex, JudgeProviderClaude} {
+		findings, err := s.listAgentFindingsForProvider(provider, "", nil)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, findings...)
+	}
+
+	slices.SortFunc(all, func(a, b AgentFindingSummary) int {
+		if a.RunID != b.RunID {
+			if a.RunID > b.RunID {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.PublicID, b.PublicID)
+	})
+	return all, nil
+}
+
+// GetAgentFindingDetail loads one finding detail from a provider-qualified public id.
+func (s *Store) GetAgentFindingDetail(publicID FindingPublicID) (FindingDetail, error) {
+	if publicID.ID <= 0 {
+		return FindingDetail{}, fmt.Errorf("finding id is required")
+	}
+	return s.GetFindingDetailForProvider(publicID.Provider, publicID.ID)
 }
 
 // ListResultFiles returns distinct source file paths that were judged for the selected provider.
@@ -584,6 +764,61 @@ func (s *Store) ListResultFiles(provider string) ([]string, error) {
 	}
 
 	return files, nil
+}
+
+func (s *Store) listAgentFindingsForProvider(provider string, where string, args []any) ([]AgentFindingSummary, error) {
+	runTable, findingsTable, normalizedProvider, err := providerTables(provider)
+	if err != nil {
+		return nil, err
+	}
+
+	query := fmt.Sprintf(`SELECT
+			f.id,
+			f.title,
+			f.score,
+			s.file_path,
+			f.judge_model,
+			f.run_id,
+			COALESCE(r.batch_id, 0),
+			s.processed_at
+		FROM %s f
+		INNER JOIN %s r ON r.id = f.run_id
+		INNER JOIN audit_sources s ON s.id = f.source_id
+		%s
+		ORDER BY f.score DESC, f.id ASC`, findingsTable, runTable, where)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list agent findings for %q: %w", normalizedProvider, err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var findings []AgentFindingSummary
+	for rows.Next() {
+		var finding AgentFindingSummary
+		if err := rows.Scan(
+			&finding.ID,
+			&finding.Title,
+			&finding.Score,
+			&finding.SourcePath,
+			&finding.JudgeModel,
+			&finding.RunID,
+			&finding.BatchID,
+			&finding.ProcessedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan agent finding: %w", err)
+		}
+		finding.Provider = normalizedProvider
+		finding.PublicID = FormatFindingPublicID(normalizedProvider, finding.ID)
+		findings = append(findings, finding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate agent findings: %w", err)
+	}
+
+	return findings, nil
 }
 
 // MostRecentProvider returns the provider with the most recent persisted run.
@@ -634,23 +869,43 @@ func (s *Store) bootstrap() error {
 			updated_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_sources_processed ON audit_sources(processed, id);`,
+		`CREATE TABLE IF NOT EXISTS audit_judge_batches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			judge_provider TEXT NOT NULL,
+			judge_model TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			total INTEGER NOT NULL DEFAULT 0,
+			succeeded INTEGER NOT NULL DEFAULT 0,
+			failed INTEGER NOT NULL DEFAULT 0,
+			started_at TEXT NOT NULL,
+			completed_at TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_judge_batches_completed ON audit_judge_batches(completed_at, id);`,
 		`CREATE TABLE IF NOT EXISTS audit_runs_codex (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id INTEGER NOT NULL,
 			judge_model TEXT NOT NULL,
+			batch_id INTEGER,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
+			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE,
+			FOREIGN KEY(batch_id) REFERENCES audit_judge_batches(id) ON DELETE SET NULL
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_runs_codex_batch_id ON audit_runs_codex(batch_id, id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_runs_codex_source_id ON audit_runs_codex(source_id, id);`,
 		`CREATE TABLE IF NOT EXISTS audit_runs_claude (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			source_id INTEGER NOT NULL,
 			judge_model TEXT NOT NULL,
+			batch_id INTEGER,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
+			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE,
+			FOREIGN KEY(batch_id) REFERENCES audit_judge_batches(id) ON DELETE SET NULL
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_audit_runs_claude_batch_id ON audit_runs_claude(batch_id, id);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_runs_claude_source_id ON audit_runs_claude(source_id, id);`,
 		`CREATE TABLE IF NOT EXISTS audit_findings_codex (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -716,6 +971,12 @@ func (s *Store) bootstrap() error {
 		if err := migrateLegacyFindings(tx); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("migrate legacy findings: %w", err)
+		}
+	}
+	if version > 0 && version < 4 {
+		if err := migrateBatchTracking(tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("migrate batch tracking: %w", err)
 		}
 	}
 	if err := dropLegacyFindingsArtifacts(tx); err != nil {
@@ -885,6 +1146,58 @@ func migrateLegacyFindings(tx *sql.Tx) error {
 	return nil
 }
 
+func migrateBatchTracking(tx *sql.Tx) error {
+	tables := []string{
+		"audit_runs_codex",
+		"audit_runs_claude",
+	}
+
+	for _, table := range tables {
+		exists, err := columnExists(tx, table, "batch_id")
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN batch_id INTEGER;`, table)); err != nil {
+			return fmt.Errorf("apply batch tracking migration: %w", err)
+		}
+	}
+	return nil
+}
+
+func columnExists(tx *sql.Tx, tableName string, columnName string) (bool, error) {
+	rows, err := tx.Query(fmt.Sprintf(`PRAGMA table_info(%s);`, tableName))
+	if err != nil {
+		return false, fmt.Errorf("load columns for %q: %w", tableName, err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
+			return false, fmt.Errorf("scan column for %q: %w", tableName, err)
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate columns for %q: %w", tableName, err)
+	}
+	return false, nil
+}
+
 func dropLegacyFindingsArtifacts(tx *sql.Tx) error {
 	statements := []string{
 		`DROP INDEX IF EXISTS idx_audit_findings_source_id;`,
@@ -921,6 +1234,34 @@ func providerTables(provider string) (runTable string, findingsTable string, nor
 	default:
 		return "", "", "", fmt.Errorf("unsupported judge provider %q", provider)
 	}
+}
+
+// FormatFindingPublicID returns the provider-qualified id used by agent-facing CLI commands.
+func FormatFindingPublicID(provider string, findingID int64) string {
+	return fmt.Sprintf("%s:%d", strings.ToLower(strings.TrimSpace(provider)), findingID)
+}
+
+// ParseFindingPublicID parses a provider-qualified finding id such as "codex:12".
+func ParseFindingPublicID(value string) (FindingPublicID, error) {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) != 2 {
+		return FindingPublicID{}, fmt.Errorf("finding id must use provider:id format")
+	}
+
+	_, _, provider, err := providerTables(parts[0])
+	if err != nil {
+		return FindingPublicID{}, err
+	}
+
+	id, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if err != nil || id <= 0 {
+		return FindingPublicID{}, fmt.Errorf("finding id must be a positive integer")
+	}
+
+	return FindingPublicID{
+		Provider: provider,
+		ID:       id,
+	}, nil
 }
 
 func (s *Store) mostRecentProvider(visibleOnly bool) (string, bool, error) {
@@ -1068,7 +1409,7 @@ func collectLogFiles(logDir string) ([]logFile, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-			return nil, fmt.Errorf("stat archived audits: %w", err)
+		return nil, fmt.Errorf("stat archived audits: %w", err)
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%q exists but is not a directory", logDir)
@@ -1169,6 +1510,13 @@ func hashContent(content []byte) string {
 
 func utcNow() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func nullableBatchID(batchID int64) any {
+	if batchID <= 0 {
+		return nil
+	}
+	return batchID
 }
 
 func isRetryableSQLError(err error) bool {

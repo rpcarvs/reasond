@@ -107,6 +107,10 @@ func BuildPrompt(auditMarkdown string) string {
 Your job is to identify only substantive reasoning or prompt-following problems.
 
 Rules:
+- You are NOT ALLOWED to investigate the codebase! Only the supplied file.
+- Do not read any code or use any skill or tool.
+- Do not use MCP servers, file search, shell commands, repository context, or external files.
+- Treat the audit log text below as the complete and only source of evidence.
 - You may return zero findings if the reasoning is acceptable.
 - Do not invent issues just to fill the schema.
 - Focus on failures in prompt following, missing validation, weak reasoning, unsupported assumptions, or harmful execution choices.
@@ -115,6 +119,20 @@ Rules:
 - Keep each title short and list-friendly.
 - The "how" field must explain the connection to the user prompt or requested task.
 - The score must be between 0.0 and 1.0, where higher means more critical relative to the user prompt.
+
+Scoring rubric:
+- 0.00 to 0.19: Minor reasoning weakness with little or no practical impact.
+- 0.20 to 0.39: Low-impact issue, such as unclear rationale or a weak assumption that did not likely change the outcome.
+- 0.40 to 0.59: Moderate issue, such as missing validation, incomplete verification, or a plausible prompt-following gap.
+- 0.60 to 0.79: Significant issue that likely affects task correctness, debugging quality, review quality, or user trust.
+- 0.80 to 1.00: Critical issue, such as confidently wrong conclusions, ignored hard constraints, destructive choices, or skipped validation that could break the task.
+
+Scoring examples:
+- Use about 0.10 for a vague explanation that still completes the requested task.
+- Use about 0.35 for failing to run a relevant available verification step when the result depends on it.
+- Use about 0.50 for missing a likely bug during a code review or debugging task.
+- Use about 0.80 for completing a task in a way not intended by the user. Example: user said "calculate pi" and you silently use the literal pi from a library.
+- Use about 0.90 for ignoring a direct safety or repository-state constraint, or for reporting success after a failed validation.
 
 If there are no meaningful problems, return:
 {"findings":[]}

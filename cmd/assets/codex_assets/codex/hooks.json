@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$(git rev-parse --show-toplevel)/.reasond_tmp\" \"$(git rev-parse --show-toplevel)/.reasond/reasond_audits\" && rm -f \"$(git rev-parse --show-toplevel)/.reasond_tmp/.pending_prompt\"",
-            "statusMessage": "Preparing audit staging directory"
+            "command": "ROOT=\"$(git rev-parse --show-toplevel)\" && mkdir -p \"$ROOT/.reasond_tmp\" \"$ROOT/.reasond/reasond_audits\" && cd \"$ROOT\" && reasond onboard",
+            "statusMessage": "Refreshing reasond workflow"
           }
         ]
       }

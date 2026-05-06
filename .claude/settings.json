@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.reasond_tmp\" \"$CLAUDE_PROJECT_DIR/.reasond/reasond_audits\"",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.reasond_tmp\" \"$CLAUDE_PROJECT_DIR/.reasond/reasond_audits\" \u0026\u0026 cd \"$CLAUDE_PROJECT_DIR\" \u0026\u0026 reasond onboard",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reasoning-audit-stop.sh\"",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reasoning-audit-prompt.sh\"",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}
