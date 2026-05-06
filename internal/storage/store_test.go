@@ -385,6 +385,123 @@ func TestQueryMethodsExposePendingSourcesAndBoardData(t *testing.T) {
 	}
 }
 
+func TestAgentFindingQueriesUseLatestBatchAndProviderQualifiedIDs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	logDir := appRuntime.ArchivePath(root)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatalf("create archive dir: %v", err)
+	}
+
+	for _, name := range []string{"codex.md", "claude.md"} {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	store, err := Open(root)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("close store: %v", err)
+		}
+	}()
+
+	if _, err := store.SyncArchivedAudits(); err != nil {
+		t.Fatalf("sync archived audits: %v", err)
+	}
+
+	codexBatchID, err := store.StartJudgeBatch(JudgeBatchInput{
+		JudgeProvider: JudgeProviderCodex,
+		JudgeModel:    "gpt-5.4-mini",
+		Mode:          "pending",
+		Total:         1,
+	})
+	if err != nil {
+		t.Fatalf("start codex batch: %v", err)
+	}
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "codex.md"),
+		JudgeProvider: JudgeProviderCodex,
+		JudgeModel:    "gpt-5.4-mini",
+		BatchID:       codexBatchID,
+		Findings: []FindingInput{{
+			Title: "Codex issue",
+			Issue: "Codex issue body",
+			Why:   "Codex why",
+			How:   "Codex how",
+			Score: 0.4,
+		}},
+	}); err != nil {
+		t.Fatalf("persist codex finding: %v", err)
+	}
+	if err := store.FinishJudgeBatch(codexBatchID, 1, 0); err != nil {
+		t.Fatalf("finish codex batch: %v", err)
+	}
+
+	claudeBatchID, err := store.StartJudgeBatch(JudgeBatchInput{
+		JudgeProvider: JudgeProviderClaude,
+		JudgeModel:    "claude-haiku-4-5",
+		Mode:          "pending",
+		Total:         1,
+	})
+	if err != nil {
+		t.Fatalf("start claude batch: %v", err)
+	}
+	if err := store.PersistProcessedResult(PersistResultInput{
+		SourceID:      sourceIDByPath(t, store, "claude.md"),
+		JudgeProvider: JudgeProviderClaude,
+		JudgeModel:    "claude-haiku-4-5",
+		BatchID:       claudeBatchID,
+		Findings: []FindingInput{{
+			Title: "Claude issue",
+			Issue: "Claude issue body",
+			Why:   "Claude why",
+			How:   "Claude how",
+			Score: 0.8,
+		}},
+	}); err != nil {
+		t.Fatalf("persist claude finding: %v", err)
+	}
+	if err := store.FinishJudgeBatch(claudeBatchID, 1, 0); err != nil {
+		t.Fatalf("finish claude batch: %v", err)
+	}
+
+	latest, err := store.ListLatestBatchFindings()
+	if err != nil {
+		t.Fatalf("list latest batch findings: %v", err)
+	}
+	if len(latest) != 1 || latest[0].PublicID != "claude:1" || latest[0].Title != "Claude issue" {
+		t.Fatalf("unexpected latest findings: %+v", latest)
+	}
+
+	all, err := store.ListAllAgentFindings()
+	if err != nil {
+		t.Fatalf("list all agent findings: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected two agent findings, got %+v", all)
+	}
+
+	publicID, err := ParseFindingPublicID(latest[0].PublicID)
+	if err != nil {
+		t.Fatalf("parse public id: %v", err)
+	}
+	detail, err := store.GetAgentFindingDetail(publicID)
+	if err != nil {
+		t.Fatalf("get agent finding detail: %v", err)
+	}
+	if detail.SourceFullPath != filepath.Join(logDir, "claude.md") {
+		t.Fatalf("expected full source path %q, got %q", filepath.Join(logDir, "claude.md"), detail.SourceFullPath)
+	}
+	if detail.Issue != "Claude issue body" || detail.JudgeProvider != JudgeProviderClaude {
+		t.Fatalf("unexpected agent detail: %+v", detail)
+	}
+}
+
 func TestMostRecentProviderReturnsLatestRunPartition(t *testing.T) {
 	t.Parallel()
 

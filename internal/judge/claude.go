@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -23,11 +23,15 @@ func (r ClaudeRunner) Run(ctx context.Context, rootDir, model, auditMarkdown str
 	if strings.TrimSpace(model) == "" {
 		return Response{}, fmt.Errorf("claude model is required")
 	}
+	_ = rootDir
 
-	rootDir, err := filepath.Abs(rootDir)
+	judgeDir, err := os.MkdirTemp("", "reasond-claude-judge-*")
 	if err != nil {
-		return Response{}, fmt.Errorf("resolve root dir: %w", err)
+		return Response{}, fmt.Errorf("create isolated claude judge directory: %w", err)
 	}
+	defer func() {
+		_ = os.RemoveAll(judgeDir)
+	}()
 
 	binaryPath := r.BinaryPath
 	if binaryPath == "" {
@@ -40,11 +44,15 @@ func (r ClaudeRunner) Run(ctx context.Context, rootDir, model, auditMarkdown str
 		"--json-schema", Schema(),
 		"--no-session-persistence",
 		"--output-format", "json",
+		"--disable-slash-commands",
+		"--tools", "",
+		"--mcp-config", `{"mcpServers":{}}`,
+		"--strict-mcp-config",
 	}
 	args = append(args, BuildPrompt(auditMarkdown))
 
 	cmd := exec.CommandContext(ctx, binaryPath, args...)
-	cmd.Dir = rootDir
+	cmd.Dir = judgeDir
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {

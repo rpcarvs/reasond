@@ -18,6 +18,11 @@ const (
 	ProviderClaude = "claude"
 )
 
+const (
+	ProcessModePending = "pending"
+	ProcessModeAll     = "all"
+)
+
 // Processor coordinates parallel judge execution with serialized persistence.
 type Processor struct {
 	Store        *storage.Store
@@ -61,7 +66,7 @@ func (p *Processor) ProcessUnprocessed(
 	if err != nil {
 		return BatchResult{}, err
 	}
-	return p.processSources(ctx, provider, model, sources, progress)
+	return p.processSources(ctx, provider, model, ProcessModePending, sources, progress)
 }
 
 // ProcessAllIndexed evaluates every indexed audit source regardless of processed status.
@@ -75,13 +80,14 @@ func (p *Processor) ProcessAllIndexed(
 	if err != nil {
 		return BatchResult{}, err
 	}
-	return p.processSources(ctx, provider, model, sources, progress)
+	return p.processSources(ctx, provider, model, ProcessModeAll, sources, progress)
 }
 
 func (p *Processor) processSources(
 	ctx context.Context,
 	provider string,
 	model string,
+	mode string,
 	sources []storage.SourceRow,
 	progress func(ProgressUpdate),
 ) (BatchResult, error) {
@@ -104,6 +110,16 @@ func (p *Processor) processSources(
 	result := BatchResult{Total: len(sources)}
 	if len(sources) == 0 {
 		return result, nil
+	}
+
+	batchID, err := p.Store.StartJudgeBatch(storage.JudgeBatchInput{
+		JudgeProvider: provider,
+		JudgeModel:    model,
+		Mode:          mode,
+		Total:         len(sources),
+	})
+	if err != nil {
+		return BatchResult{}, err
 	}
 
 	workerCount := p.workerCount(len(sources))
@@ -165,6 +181,7 @@ func (p *Processor) processSources(
 			SourceID:      outcome.Source.ID,
 			JudgeProvider: provider,
 			JudgeModel:    model,
+			BatchID:       batchID,
 			Findings:      outcome.Findings,
 		}); err != nil {
 			update.Err = fmt.Errorf("persist result for %q: %w", outcome.Source.FilePath, err)
@@ -175,6 +192,10 @@ func (p *Processor) processSources(
 
 		result.Succeeded++
 		emitProgress(progress, update)
+	}
+
+	if err := p.Store.FinishJudgeBatch(batchID, result.Succeeded, len(result.Failed)); err != nil {
+		return result, err
 	}
 
 	if err := ctx.Err(); err != nil {

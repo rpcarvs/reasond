@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	DirectoryName       = ".reasond"
-	DatabaseFileName    = "audits_reports.db"
+	DirectoryName        = ".reasond"
+	DatabaseFileName     = "audits_reports.db"
+	SettingsFileName     = "settings.json"
 	StagingDirectoryName = ".reasond_tmp"
 	ArchiveDirectoryName = "reasond_audits"
 )
@@ -76,6 +77,11 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 // DatabasePath returns the location of the SQLite database inside the runtime directory.
 func DatabasePath(targetDir string) string {
 	return filepath.Join(targetDir, DirectoryName, DatabaseFileName)
+}
+
+// SettingsPath returns the local repository settings file inside the runtime directory.
+func SettingsPath(targetDir string) string {
+	return filepath.Join(targetDir, DirectoryName, SettingsFileName)
 }
 
 // ArchivePath returns the canonical audit archive directory inside the runtime directory.
