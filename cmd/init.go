@@ -18,6 +18,7 @@ import (
 type initRequest struct {
 	Providers []assetbundle.Provider
 	Settings  settings.Settings
+	GitIgnore *bool
 }
 
 type judgeChoice struct {
@@ -28,6 +29,8 @@ type judgeChoice struct {
 const providerPromptDescription = "Checkbox list: press x or space to select Codex and/or Claude Code, then press enter to confirm."
 
 const judgePromptDescription = "Choose the default judge used by `reasond judge`. Use arrows to move and enter to confirm."
+
+const gitIgnorePromptDescription = "Choose Yes to add .reasond/ and .reasond_tmp/ to the repository .gitignore."
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
@@ -51,7 +54,19 @@ and saves the default judge provider/model to .reasond/settings.json.
 
 func promptInitRequest() (initRequest, error) {
 	providers := []assetbundle.Provider{assetbundle.ProviderCodex}
+	ignoreReasond := true
 	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[bool]().
+				Title("Should reasond be git ignored?").
+				Description(gitIgnorePromptDescription).
+				Options(
+					huh.NewOption("Yes", true),
+					huh.NewOption("No", false),
+				).
+				Height(4).
+				Value(&ignoreReasond),
+		),
 		huh.NewGroup(
 			huh.NewMultiSelect[assetbundle.Provider]().
 				Title("Install which coding-agent assets?").
@@ -95,7 +110,9 @@ func promptInitRequest() (initRequest, error) {
 		Settings: settings.Settings{
 			DefaultJudgeProvider: selected.Provider,
 			DefaultJudgeModel:    selected.Model,
+			GitIgnoreReasond:     ignoreReasond,
 		},
+		GitIgnore: &ignoreReasond,
 	}, nil
 }
 
@@ -103,6 +120,7 @@ func runInitRequest(out io.Writer, request initRequest) error {
 	if len(request.Providers) == 0 {
 		return fmt.Errorf("at least one provider is required")
 	}
+	request.Settings.GitIgnoreReasond = request.gitIgnoreEnabled()
 
 	rootDir, err := currentProjectDir()
 	if err != nil {
@@ -114,7 +132,9 @@ func runInitRequest(out io.Writer, request initRequest) error {
 	}
 
 	for _, provider := range request.Providers {
-		if _, err := bootstrap.InitProvider(provider); err != nil {
+		if _, err := bootstrap.InitProviderWithOptions(provider, app.InitOptions{
+			ManageGitIgnore: request.gitIgnoreEnabled(),
+		}); err != nil {
 			return fmt.Errorf("initialize %s provider: %w", provider, err)
 		}
 		_, _ = fmt.Fprintf(out, "Installed %s assets.\n", provider.Label())
@@ -128,6 +148,13 @@ func runInitRequest(out io.Writer, request initRequest) error {
 	_, _ = fmt.Fprintf(out, "Default judge: %s / %s\n", saved.DefaultJudgeProvider, saved.DefaultJudgeModel)
 	_, _ = fmt.Fprintln(out, "Settings: .reasond/settings.json")
 	return nil
+}
+
+func (r initRequest) gitIgnoreEnabled() bool {
+	if r.GitIgnore == nil {
+		return true
+	}
+	return *r.GitIgnore
 }
 
 func judgeChoices() ([]judgeChoice, error) {

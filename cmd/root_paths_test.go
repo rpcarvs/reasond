@@ -38,6 +38,7 @@ func TestRunInitRequestFromSubdirInitializesGitRoot(t *testing.T) {
 		filepath.Join(root, ".claude", "settings.json"),
 		filepath.Join(root, ".reasond", "settings.json"),
 		filepath.Join(root, ".reasond_tmp"),
+		filepath.Join(root, ".gitignore"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("stat initialized root path %q: %v", path, err)

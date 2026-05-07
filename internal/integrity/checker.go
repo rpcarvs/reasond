@@ -10,6 +10,7 @@ import (
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
 	"github.com/rpcarvs/reasond/internal/install"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/settings"
 )
 
 // Status describes whether an expected runtime or provider-managed file is present, missing, or drifted.
@@ -108,9 +109,14 @@ func (Checker) Check(targetDir string) (Report, error) {
 		return Report{}, fmt.Errorf("resolve target dir: %w", err)
 	}
 
+	repoSettings, err := settings.Load(rootDir)
+	if err != nil {
+		return Report{}, err
+	}
+
 	report := Report{
 		RootDir:   rootDir,
-		Runtime:   checkRuntime(rootDir),
+		Runtime:   checkRuntime(rootDir, repoSettings.GitIgnoreReasond),
 		Providers: make(map[assetbundle.Provider]ProviderStatus),
 	}
 
@@ -125,13 +131,18 @@ func (Checker) Check(targetDir string) (Report, error) {
 	return report, nil
 }
 
-func checkRuntime(rootDir string) RuntimeStatus {
+func checkRuntime(rootDir string, manageGitIgnore bool) RuntimeStatus {
 	runtimeDir := filepath.Join(rootDir, appRuntime.DirectoryName)
 	archiveDir := appRuntime.ArchivePath(rootDir)
 	databasePath := appRuntime.DatabasePath(rootDir)
 	gitIgnorePath := filepath.Join(rootDir, ".gitignore")
 
-	missingEntries := missingGitIgnoreEntries(gitIgnorePath, appRuntime.GitIgnoreEntries)
+	var missingEntries []string
+	gitIgnoreStatusValue := StatusPresent
+	if manageGitIgnore {
+		missingEntries = missingGitIgnoreEntries(gitIgnorePath, appRuntime.GitIgnoreEntries)
+		gitIgnoreStatusValue = gitIgnoreStatus(gitIgnorePath, missingEntries)
+	}
 
 	return RuntimeStatus{
 		RuntimeDir: ItemStatus{
@@ -148,7 +159,7 @@ func checkRuntime(rootDir string) RuntimeStatus {
 		},
 		GitIgnore: ItemStatus{
 			Path:   gitIgnorePath,
-			Status: gitIgnoreStatus(gitIgnorePath, missingEntries),
+			Status: gitIgnoreStatusValue,
 		},
 		MissingGitIgnores: missingEntries,
 	}

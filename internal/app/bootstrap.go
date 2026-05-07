@@ -42,6 +42,16 @@ type InitResult struct {
 	Codex    *codexconfig.Result
 }
 
+// InitOptions controls optional repository mutations during provider initialization.
+type InitOptions struct {
+	ManageGitIgnore bool
+}
+
+// DefaultInitOptions returns the init defaults used by existing provider bootstrap flows.
+func DefaultInitOptions() InitOptions {
+	return InitOptions{ManageGitIgnore: true}
+}
+
 // ErrCodexHooksBlocked reports that local Codex init was skipped because the global feature flag is disabled.
 var ErrCodexHooksBlocked = errors.New("codex hooks are disabled in the global config")
 
@@ -61,6 +71,11 @@ func (b Bootstrap) Inspect() (integrity.Report, error) {
 
 // InitProvider installs provider assets and runtime files using the shared bootstrap path.
 func (b Bootstrap) InitProvider(provider assetbundle.Provider) (InitResult, error) {
+	return b.InitProviderWithOptions(provider, DefaultInitOptions())
+}
+
+// InitProviderWithOptions installs provider assets and runtime files using the shared bootstrap path.
+func (b Bootstrap) InitProviderWithOptions(provider assetbundle.Provider, options InitOptions) (InitResult, error) {
 	result := InitResult{}
 
 	if provider == assetbundle.ProviderCodex {
@@ -82,7 +97,9 @@ func (b Bootstrap) InitProvider(provider assetbundle.Provider) (InitResult, erro
 	}
 	result.Install = installResult
 
-	layoutResult, err := appRuntime.EnsureLayout(b.RootDir)
+	layoutResult, err := appRuntime.EnsureLayoutWithOptions(b.RootDir, appRuntime.LayoutOptions{
+		ManageGitIgnore: options.ManageGitIgnore,
+	})
 	if err != nil {
 		result.Layout = layoutResult
 		return result, err

@@ -201,7 +201,14 @@ func openAgentStore() (*storage.Store, func(), error) {
 		return nil, nil, err
 	}
 
-	if _, err := appRuntime.EnsureLayout(rootDir); err != nil {
+	loadedSettings, err := settings.Load(rootDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if _, err := appRuntime.EnsureLayoutWithOptions(rootDir, appRuntime.LayoutOptions{
+		ManageGitIgnore: loadedSettings.GitIgnoreReasond,
+	}); err != nil {
 		return nil, nil, err
 	}
 

@@ -12,10 +12,11 @@ import (
 
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
 	"github.com/rpcarvs/reasond/internal/app"
-	"github.com/rpcarvs/reasond/internal/integrity"
 	"github.com/rpcarvs/reasond/internal/install"
+	"github.com/rpcarvs/reasond/internal/integrity"
 	"github.com/rpcarvs/reasond/internal/processing"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/settings"
 	"github.com/rpcarvs/reasond/internal/storage"
 	"github.com/rpcarvs/reasond/internal/testutil"
 )
@@ -44,7 +45,7 @@ func TestReloadStateOnUninitializedRepoStaysInOverview(t *testing.T) {
 	if m.phase != phaseBoard {
 		t.Fatalf("expected board phase, got %s", m.phase)
 	}
-	if m.queuedPhase != phaseInitSelect {
+	if m.queuedPhase != phaseInitGitIgnore {
 		t.Fatalf("expected queued init modal, got %s", m.queuedPhase)
 	}
 }
@@ -215,11 +216,37 @@ func TestBoardInstallKeyOpensInitSelection(t *testing.T) {
 	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
 	next := nextModel.(model)
 
-	if next.phase != phaseInitSelect {
-		t.Fatalf("expected init selection phase, got %s", next.phase)
+	if next.phase != phaseInitGitIgnore {
+		t.Fatalf("expected gitignore phase, got %s", next.phase)
 	}
 	if next.initProviderIndex != 1 {
 		t.Fatalf("expected Claude to be preselected, got index %d", next.initProviderIndex)
+	}
+	if next.initGitIgnoreIndex != 0 || !next.initGitIgnore {
+		t.Fatalf("expected gitignore prompt to default to Yes")
+	}
+}
+
+func TestInitGitIgnorePromptCanOptOutBeforeProviderSelection(t *testing.T) {
+	t.Parallel()
+
+	m := model{
+		phase:             phaseInitGitIgnore,
+		initProviderIndex: 1,
+		initGitIgnore:     true,
+	}
+
+	nextModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next := nextModel.(model)
+
+	if next.phase != phaseInitSelect {
+		t.Fatalf("expected provider selection phase, got %s", next.phase)
+	}
+	if next.initGitIgnore {
+		t.Fatalf("expected gitignore preference to be disabled")
+	}
+	if next.initProviderIndex != 1 {
+		t.Fatalf("expected provider selection to preserve preselected provider")
 	}
 }
 
@@ -237,9 +264,10 @@ func TestSuccessfulInitShowsCompletionThenFollowupPrompt(t *testing.T) {
 	}
 
 	m := model{
-		bootstrap: bootstrap,
-		progress:  progressbar.New(),
-		phase:     phaseInitRunning,
+		bootstrap:     bootstrap,
+		progress:      progressbar.New(),
+		phase:         phaseInitRunning,
+		initGitIgnore: true,
 	}
 
 	nextModel, _ := m.Update(initDoneMsg{
@@ -287,9 +315,10 @@ func TestSecondInstallInSameSessionDoesNotPromptFollowupAgain(t *testing.T) {
 	}
 
 	m := model{
-		bootstrap: bootstrap,
-		progress:  progressbar.New(),
-		phase:     phaseInitRunning,
+		bootstrap:     bootstrap,
+		progress:      progressbar.New(),
+		phase:         phaseInitRunning,
+		initGitIgnore: true,
 	}
 
 	nextModel, _ := m.Update(initDoneMsg{
@@ -331,6 +360,51 @@ func TestSecondInstallInSameSessionDoesNotPromptFollowupAgain(t *testing.T) {
 	}
 	if final.initOfferedOther != true {
 		t.Fatalf("expected install session to remember the followup was already offered")
+	}
+}
+
+func TestStartInitPersistsGitIgnoreOptOut(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	bootstrap, err := app.NewBootstrap(root)
+	if err != nil {
+		t.Fatalf("new bootstrap: %v", err)
+	}
+
+	m := model{
+		bootstrap:     bootstrap,
+		progress:      progressbar.New(),
+		phase:         phaseInitSelect,
+		initGitIgnore: false,
+	}
+
+	next, cmd := m.startInit(assetbundle.ProviderClaude)
+	if next.phase != phaseInitRunning {
+		t.Fatalf("expected init running phase, got %s", next.phase)
+	}
+	if cmd == nil {
+		t.Fatalf("expected async init command")
+	}
+
+	msg := cmd()
+	done, ok := msg.(initDoneMsg)
+	if !ok {
+		t.Fatalf("expected initDoneMsg, got %T", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("expected init to succeed, got %v", done.err)
+	}
+
+	loaded, err := settings.Load(root)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if loaded.GitIgnoreReasond {
+		t.Fatalf("expected TUI init to persist gitignore opt-out")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("expected .gitignore to stay absent, stat err=%v", err)
 	}
 }
 
@@ -452,9 +526,9 @@ func TestSourceViewUpDownScrollsWithoutChangingSelection(t *testing.T) {
 	t.Parallel()
 
 	m := model{
-		phase:      phaseSource,
-		boardIndex: 3,
-		height:     10,
+		phase:       phaseSource,
+		boardIndex:  3,
+		height:      10,
 		sourceLines: make([]string, 30),
 	}
 	for i := range m.sourceLines {
@@ -476,10 +550,10 @@ func TestSourceViewUpClampsAtTopAfterBlockScroll(t *testing.T) {
 	t.Parallel()
 
 	m := model{
-		phase:       phaseSource,
-		height:      10,
+		phase:        phaseSource,
+		height:       10,
 		sourceScroll: 10,
-		sourceLines: make([]string, 30),
+		sourceLines:  make([]string, 30),
 	}
 	for i := range m.sourceLines {
 		m.sourceLines[i] = "line"
@@ -496,9 +570,9 @@ func TestSourceViewDownClampsAtRenderedBottom(t *testing.T) {
 	t.Parallel()
 
 	m := model{
-		phase:  phaseSource,
-		height: 12,
-		width:  80,
+		phase:       phaseSource,
+		height:      12,
+		width:       80,
 		sourceLines: make([]string, 15),
 	}
 	for i := range m.sourceLines {
@@ -517,8 +591,8 @@ func TestSourceViewScrollsWrappedContentByRenderedRows(t *testing.T) {
 
 	longLine := strings.Repeat("wrapped content ", 20)
 	m := model{
-		phase: phaseSource,
-		width: 24,
+		phase:  phaseSource,
+		width:  24,
 		height: 12,
 		sourceLines: []string{
 			longLine,

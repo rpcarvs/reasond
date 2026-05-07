@@ -4,15 +4,6 @@
       {
         "hooks": [
           {
-            "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.reasond_tmp\" \"$CLAUDE_PROJECT_DIR/.reasond/reasond_audits\"",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      },
-      {
-        "hooks": [
-          {
             "command": "mkdir -p \"$CLAUDE_PROJECT_DIR/.reasond_tmp\" \"$CLAUDE_PROJECT_DIR/.reasond/reasond_audits\" \u0026\u0026 cd \"$CLAUDE_PROJECT_DIR\" \u0026\u0026 reasond onboard",
             "type": "command"
           }

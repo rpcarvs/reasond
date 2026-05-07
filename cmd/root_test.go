@@ -27,7 +27,6 @@ func TestRootHelpFocusesOnTUIWorkflow(t *testing.T) {
 
 	helpText := out.String()
 	for _, unwanted := range []string{
-		"completion [command]",
 		"help [command]",
 	} {
 		if strings.Contains(helpText, unwanted) {
@@ -44,6 +43,7 @@ func TestRootHelpFocusesOnTUIWorkflow(t *testing.T) {
 		"reasond judge",
 		"reasond latest",
 		"reasond show ID",
+		"completion",
 	} {
 		if !strings.Contains(helpText, expected) {
 			t.Fatalf("expected help text %q in output:\n%s", expected, helpText)
@@ -194,6 +194,16 @@ func TestRunInitRequestInstallsProviderAndSavesSettings(t *testing.T) {
 	if loaded.DefaultJudgeProvider != "claude" || loaded.DefaultJudgeModel != settings.DefaultClaudeModel {
 		t.Fatalf("unexpected loaded settings: %+v", loaded)
 	}
+	if !loaded.GitIgnoreReasond {
+		t.Fatalf("expected gitignore preference to default to true")
+	}
+	content, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if string(content) != ".reasond/\n.reasond_tmp/\n" {
+		t.Fatalf("unexpected .gitignore content: %q", string(content))
+	}
 
 	for _, expected := range []string{
 		"Installed Claude assets.",
@@ -212,6 +222,9 @@ func TestInitPromptLabelsAreExplicit(t *testing.T) {
 	}
 	if !strings.Contains(providerPromptDescription, "enter") {
 		t.Fatalf("provider prompt must explain confirmation key")
+	}
+	if !strings.Contains(gitIgnorePromptDescription, ".reasond/ and .reasond_tmp/") {
+		t.Fatalf("gitignore prompt must explain which entries are added")
 	}
 	if got := providerOptionLabel(assetbundle.ProviderCodex); got != "Codex" {
 		t.Fatalf("unexpected codex provider label %q", got)
@@ -234,6 +247,36 @@ func TestInitPromptLabelsAreExplicit(t *testing.T) {
 	}
 	if got := judgeChoiceLabel(judgeChoice{Provider: "claude", Model: "claude-haiku-4-5"}); got != "Claude Code judge: claude-haiku-4-5" {
 		t.Fatalf("unexpected claude judge label %q", got)
+	}
+}
+
+func TestRunInitRequestCanSkipGitIgnoreMutation(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+	t.Chdir(root)
+
+	disabled := false
+	var out bytes.Buffer
+	if err := runInitRequest(&out, initRequest{
+		Providers: []assetbundle.Provider{assetbundle.ProviderClaude},
+		Settings: settings.Settings{
+			DefaultJudgeProvider: "claude",
+			DefaultJudgeModel:    settings.DefaultClaudeModel,
+		},
+		GitIgnore: &disabled,
+	}); err != nil {
+		t.Fatalf("run init request: %v\n%s", err, out.String())
+	}
+
+	loaded, err := settings.Load(root)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if loaded.GitIgnoreReasond {
+		t.Fatalf("expected saved gitignore preference to be false")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("expected .gitignore to stay absent, stat err=%v", err)
 	}
 }
 

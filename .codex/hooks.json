@@ -4,16 +4,6 @@
       {
         "hooks": [
           {
-            "command": "mkdir -p \"$(git rev-parse --show-toplevel)/.reasond_tmp\" \"$(git rev-parse --show-toplevel)/.reasond/reasond_audits\"",
-            "statusMessage": "Preparing audit staging directory",
-            "type": "command"
-          }
-        ],
-        "matcher": "startup|resume"
-      },
-      {
-        "hooks": [
-          {
             "command": "ROOT=\"$(git rev-parse --show-toplevel)\" \u0026\u0026 mkdir -p \"$ROOT/.reasond_tmp\" \"$ROOT/.reasond/reasond_audits\" \u0026\u0026 cd \"$ROOT\" \u0026\u0026 reasond onboard",
             "statusMessage": "Refreshing reasond workflow",
             "type": "command"

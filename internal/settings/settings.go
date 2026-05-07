@@ -37,6 +37,7 @@ var providerModels = map[string][]string{
 type Settings struct {
 	DefaultJudgeProvider string `json:"default_judge_provider"`
 	DefaultJudgeModel    string `json:"default_judge_model"`
+	GitIgnoreReasond     bool   `json:"git_ignore_reasond"`
 }
 
 // Defaults returns the migration-friendly judge settings used when no settings file exists.
@@ -44,6 +45,7 @@ func Defaults() Settings {
 	return Settings{
 		DefaultJudgeProvider: DefaultJudgeProvider,
 		DefaultJudgeModel:    DefaultCodexModel,
+		GitIgnoreReasond:     true,
 	}
 }
 
@@ -87,6 +89,7 @@ func Validate(input Settings) (Settings, error) {
 	return Settings{
 		DefaultJudgeProvider: provider,
 		DefaultJudgeModel:    model,
+		GitIgnoreReasond:     input.GitIgnoreReasond,
 	}, nil
 }
 
@@ -105,11 +108,28 @@ func Load(rootDir string) (Settings, error) {
 		return Settings{}, fmt.Errorf("read settings: %w", err)
 	}
 
-	var loaded Settings
+	type storedSettings struct {
+		DefaultJudgeProvider string `json:"default_judge_provider"`
+		DefaultJudgeModel    string `json:"default_judge_model"`
+		GitIgnoreReasond     *bool  `json:"git_ignore_reasond"`
+	}
+
+	var loaded storedSettings
 	if err := json.Unmarshal(content, &loaded); err != nil {
 		return Settings{}, fmt.Errorf("decode settings: %w", err)
 	}
-	return Validate(loaded)
+
+	merged := Defaults()
+	if loaded.DefaultJudgeProvider != "" {
+		merged.DefaultJudgeProvider = loaded.DefaultJudgeProvider
+	}
+	if loaded.DefaultJudgeModel != "" {
+		merged.DefaultJudgeModel = loaded.DefaultJudgeModel
+	}
+	if loaded.GitIgnoreReasond != nil {
+		merged.GitIgnoreReasond = *loaded.GitIgnoreReasond
+	}
+	return Validate(merged)
 }
 
 // Save validates and writes repository-local settings.

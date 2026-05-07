@@ -37,6 +37,11 @@ can inspect prior reasoning issues before finalizing conclusions.
 - `reasond onboard` prints agent-facing reasoning-debug instructions and is referenced by the `reasoning-debug` skill.
 - SessionStart hooks now run `reasond onboard` as a local refresher after preparing `.reasond` directories.
 - Project-scoped reasond CLI and TUI entrypoints resolve the canonical Git repository root before reading or writing `.reasond` state, so subdirectory launches use the same repository data.
+- Init now asks whether reasond files should be git ignored. The setting is persisted as `git_ignore_reasond` in `.reasond/settings.json`, defaults to `true`, and both CLI and TUI init paths honor it.
+- Runtime bootstrap no longer mutates `.gitignore` unconditionally. Agent CLI runtime setup and integrity checks read the saved gitignore preference before deciding whether `.reasond/` and `.reasond_tmp/` are required in `.gitignore`.
+- Agent-facing CLI commands call a shared `openAgentStore` path that ensures runtime layout, opens the SQLite store, and syncs archived markdown audits before reading or judging findings.
+- The root CLI keeps the bare `reasond` TUI entrypoint and hides `help [command]`, but `completion` is enabled so shells can generate autocompletion scripts.
+- Investigation under closed FAZ epic `reasond-9fvz` found no successful `reasond` CLI command routing normal output to stderr. The only non-test stderr messages in shipped commands are fail-closed Stop hook warnings in the Codex and Claude hook scripts, both paired with `exit 1`.
 - Judge runners are intentionally isolated from the repository. Codex and Claude run from temporary directories and receive the audit markdown as prompt text only.
 - Codex judge also disables known tool/plugin/context features such as shell, search, plugins, hooks, apps, browser, and workspace dependency features.
 - Claude judge does not use `--bare` because that disables OAuth/keychain login. It still runs from a temp directory with tools disabled, slash commands disabled, empty strict MCP config, and no session persistence.

@@ -54,3 +54,24 @@ func TestEnsureLayoutUsesPartialFixtureIdempotently(t *testing.T) {
 		t.Fatalf("expected reasond_audits directory to exist, stat err=%v", err)
 	}
 }
+
+func TestEnsureLayoutWithOptionsSkipsGitIgnoreMutation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+
+	result, err := EnsureLayoutWithOptions(root, LayoutOptions{ManageGitIgnore: false})
+	if err != nil {
+		t.Fatalf("ensure layout without gitignore management: %v", err)
+	}
+
+	if !result.RuntimeDirCreated || !result.StagingDirCreated || !result.ArchiveDirCreated {
+		t.Fatalf("expected runtime directories to be created, got %+v", result)
+	}
+	if result.GitIgnoreCreated || len(result.GitIgnoreAdded) != 0 || len(result.GitIgnorePresent) != 0 {
+		t.Fatalf("expected gitignore results to stay empty, got %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("expected .gitignore to stay absent, stat err=%v", err)
+	}
+}

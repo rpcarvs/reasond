@@ -27,12 +27,16 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	saved, err := Save(root, Settings{
 		DefaultJudgeProvider: "CLAUDE",
 		DefaultJudgeModel:    DefaultClaudeModel,
+		GitIgnoreReasond:     false,
 	})
 	if err != nil {
 		t.Fatalf("save settings: %v", err)
 	}
 	if saved.DefaultJudgeProvider != "claude" {
 		t.Fatalf("expected provider normalization, got %+v", saved)
+	}
+	if saved.GitIgnoreReasond {
+		t.Fatalf("expected gitignore preference to round-trip as false")
 	}
 
 	loaded, err := Load(root)
@@ -62,6 +66,27 @@ func TestLoadRejectsInvalidSettings(t *testing.T) {
 
 	if _, err := Load(root); err == nil {
 		t.Fatalf("expected invalid provider error")
+	}
+}
+
+func TestLoadDefaultsGitIgnorePreferenceWhenFieldMissing(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	settingsDir := filepath.Join(root, appRuntime.DirectoryName)
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatalf("create settings dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, appRuntime.SettingsFileName), []byte(`{"default_judge_provider":"codex","default_judge_model":"gpt-5.4-mini"}`), 0o644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	loaded, err := Load(root)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if !loaded.GitIgnoreReasond {
+		t.Fatalf("expected missing gitignore field to default to true")
 	}
 }
 

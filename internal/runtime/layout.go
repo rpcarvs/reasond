@@ -31,8 +31,23 @@ type LayoutResult struct {
 	GitIgnorePresent  []string
 }
 
+// LayoutOptions controls optional runtime side effects during repository bootstrap.
+type LayoutOptions struct {
+	ManageGitIgnore bool
+}
+
+// DefaultLayoutOptions returns the repository bootstrap defaults used across reasond.
+func DefaultLayoutOptions() LayoutOptions {
+	return LayoutOptions{ManageGitIgnore: true}
+}
+
 // EnsureLayout prepares the local runtime directory and gitignore entries required by reasond.
 func EnsureLayout(targetDir string) (LayoutResult, error) {
+	return EnsureLayoutWithOptions(targetDir, DefaultLayoutOptions())
+}
+
+// EnsureLayoutWithOptions prepares the local runtime directory and optional gitignore entries.
+func EnsureLayoutWithOptions(targetDir string, options LayoutOptions) (LayoutResult, error) {
 	targetDir, err := filepath.Abs(targetDir)
 	if err != nil {
 		return LayoutResult{}, fmt.Errorf("resolve target dir: %w", err)
@@ -60,6 +75,10 @@ func EnsureLayout(targetDir string) (LayoutResult, error) {
 		RuntimeDirCreated: created,
 		StagingDirCreated: stagingCreated,
 		ArchiveDirCreated: archiveCreated,
+	}
+
+	if !options.ManageGitIgnore {
+		return result, nil
 	}
 
 	gitIgnorePath := filepath.Join(targetDir, ".gitignore")

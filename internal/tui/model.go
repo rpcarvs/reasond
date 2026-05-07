@@ -18,6 +18,7 @@ import (
 	"github.com/rpcarvs/reasond/internal/integrity"
 	"github.com/rpcarvs/reasond/internal/processing"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
+	"github.com/rpcarvs/reasond/internal/settings"
 	"github.com/rpcarvs/reasond/internal/storage"
 )
 
@@ -39,6 +40,7 @@ type phase string
 
 const (
 	phaseBoard          phase = "board"
+	phaseInitGitIgnore  phase = "init_gitignore"
 	phaseInitSelect     phase = "init_select"
 	phaseInitRunning    phase = "init_running"
 	phaseInitResult     phase = "init_result"
@@ -82,10 +84,11 @@ type model struct {
 	selectedModel        string
 	processMode          processMode
 
-	initProviderIndex int
-	initFollowupIndex int
-	providerIndex     int
-	modelIndex        int
+	initProviderIndex  int
+	initGitIgnoreIndex int
+	initFollowupIndex  int
+	providerIndex      int
+	modelIndex         int
 
 	progress         progressbar.Model
 	completed        int
@@ -97,6 +100,7 @@ type model struct {
 	statusLine       string
 	initStatus       string
 	initFailed       bool
+	initGitIgnore    bool
 	initProvider     assetbundle.Provider
 	initOfferedOther bool
 
@@ -428,6 +432,12 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.initOfferedOther = true
 			return m.startInit(otherProvider(m.initProvider))
 		}
+		if m.phase == phaseInitGitIgnore {
+			m.initGitIgnoreIndex = 0
+			m.initGitIgnore = true
+			m.phase = phaseInitSelect
+			return m, nil
+		}
 	case "n":
 		if m.phase == phaseAuditPrompt {
 			m.auditPromptDismissed = true
@@ -438,6 +448,12 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.initFollowupIndex = 1
 			m.phase = phaseBoard
 			return m, m.Init()
+		}
+		if m.phase == phaseInitGitIgnore {
+			m.initGitIgnoreIndex = 1
+			m.initGitIgnore = false
+			m.phase = phaseInitSelect
+			return m, nil
 		}
 	case "enter":
 		switch m.phase {
@@ -450,6 +466,10 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case phaseSource:
 			m.phase = phaseDetail
+			return m, nil
+		case phaseInitGitIgnore:
+			m.initGitIgnore = m.initGitIgnoreIndex == 0
+			m.phase = phaseInitSelect
 			return m, nil
 		case phaseInitSelect:
 			if m.initProviderIndex == 1 {
@@ -562,6 +582,17 @@ func (m model) moveSelection(step int) (tea.Model, tea.Cmd) {
 		}
 		m.initProviderIndex = next
 		return m, nil
+	case phaseInitGitIgnore:
+		next := m.initGitIgnoreIndex + step
+		if next < 0 {
+			next = 0
+		}
+		if next > 1 {
+			next = 1
+		}
+		m.initGitIgnoreIndex = next
+		m.initGitIgnore = next == 0
+		return m, nil
 	case phaseInitFollowup:
 		next := m.initFollowupIndex + step
 		if next < 0 {
@@ -631,9 +662,16 @@ func (m model) View() string {
 	}
 
 	switch m.phase {
+	case phaseInitGitIgnore:
+		return m.overlay(base, m.renderSelectionModal(
+			"Should reasond be git ignored?",
+			[]string{"Yes", "No"},
+			m.initGitIgnoreIndex,
+			"Enter confirm • up/down choose • q close",
+		))
 	case phaseInitSelect:
 		title := "Install provider"
-	if !hasRuntimeAndArchiveDir(m.report.RootDir, m.report.Runtime.RuntimeDir.Status) {
+		if !hasRuntimeAndArchiveDir(m.report.RootDir, m.report.Runtime.RuntimeDir.Status) {
 			title = "reasond needs initialization"
 		}
 		return m.overlay(base, m.renderSelectionModal(title, []string{
@@ -1426,7 +1464,18 @@ func (m model) startInit(provider assetbundle.Provider) (model, tea.Cmd) {
 	m.events = events
 
 	go func() {
-		result, err := m.bootstrap.InitProvider(provider)
+		result, err := m.bootstrap.InitProviderWithOptions(provider, app.InitOptions{
+			ManageGitIgnore: m.initGitIgnore,
+		})
+		if err == nil {
+			repoSettings, loadErr := settings.Load(m.bootstrap.RootDir)
+			if loadErr != nil {
+				err = loadErr
+			} else {
+				repoSettings.GitIgnoreReasond = m.initGitIgnore
+				_, err = settings.Save(m.bootstrap.RootDir, repoSettings)
+			}
+		}
 		events <- initDoneMsg{
 			provider: provider,
 			result:   result,
@@ -1598,7 +1647,7 @@ func (m *model) reloadState() error {
 	m.queuedPhase = phaseBoard
 	if !hasRuntimeAndArchiveDir(report.RootDir, report.Runtime.RuntimeDir.Status) {
 		m.initOfferedOther = false
-		m.queuedPhase = phaseInitSelect
+		m.queuedPhase = phaseInitGitIgnore
 	} else if m.pendingCount > 0 && !m.auditPromptDismissed {
 		m.queuedPhase = phaseAuditPrompt
 	}
@@ -1659,8 +1708,10 @@ func hasRuntimeAndArchiveDir(rootDir string, runtimeStatus integrity.Status) boo
 
 func (m *model) beginInitSession(providerIndex int) {
 	m.initOfferedOther = false
+	m.initGitIgnore = true
+	m.initGitIgnoreIndex = 0
 	m.initProviderIndex = providerIndex
-	m.phase = phaseInitSelect
+	m.phase = phaseInitGitIgnore
 }
 
 func (m model) shouldOfferInitFollowup() bool {

@@ -43,7 +43,6 @@ Agent flow:
 		},
 	}
 	cmd.AddCommand(newInitCmd(), newOnboardCmd(), newJudgeCmd(), newLatestCmd(), newListCmd(), newShowCmd())
-	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.SetHelpCommand(&cobra.Command{Hidden: true})
 	return cmd
 }
