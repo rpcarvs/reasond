@@ -35,7 +35,7 @@ const gitIgnorePromptDescription = "Choose Yes to add .reasond/ and .reasond_tmp
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize reasond hooks, skills, and judge defaults",
+		Short: "Initialize reasond assets and judge defaults",
 		Long: strings.TrimSpace(`
 Initialize reasond in the current repository.
 

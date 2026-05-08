@@ -1,13 +1,11 @@
 package app
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
-	"github.com/rpcarvs/reasond/internal/codexconfig"
 	"github.com/rpcarvs/reasond/internal/integrity"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
@@ -73,43 +71,27 @@ func TestInitProviderCreatesDatabaseEagerlyAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestInitProviderCodexBlockedConfigDoesNotMutateRepository(t *testing.T) {
+func TestInitProviderCodexInstallsWithoutGlobalConfigMutation(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	homeDir := t.TempDir()
-
-	configDir := filepath.Join(homeDir, ".codex")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("create config dir: %v", err)
-	}
-	configPath := filepath.Join(configDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte("[features]\ncodex_hooks = false\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	bootstrap := Bootstrap{
-		RootDir:            root,
-		CodexConfigManager: codexconfig.Manager{HomeDir: homeDir},
-	}
+	bootstrap := Bootstrap{RootDir: root}
 
 	result, err := bootstrap.InitProvider(assetbundle.ProviderCodex)
-	if !errors.Is(err, ErrCodexHooksBlocked) {
-		t.Fatalf("expected blocked codex hooks error, got %v", err)
-	}
-	if result.Codex == nil || result.Codex.Status != codexconfig.StatusBlocked {
-		t.Fatalf("expected blocked codex config result, got %+v", result.Codex)
+	if err != nil {
+		t.Fatalf("init codex provider: %v", err)
 	}
 
 	for _, path := range []string{
 		filepath.Join(root, ".codex"),
-		filepath.Join(root, "AGENTS.md"),
 		filepath.Join(root, ".reasond"),
 		filepath.Join(root, ".reasond_tmp"),
-		filepath.Join(root, ".gitignore"),
 	} {
-		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-			t.Fatalf("expected %s to remain absent, stat err=%v", path, statErr)
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("expected %s to exist, stat err=%v", path, statErr)
 		}
+	}
+	if result.Database.Path == "" {
+		t.Fatalf("expected database path to be reported")
 	}
 }

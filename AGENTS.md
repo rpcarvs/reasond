@@ -29,6 +29,7 @@ can inspect prior reasoning issues before finalizing conclusions.
 - `AGENTS.md` is canonical installed context. Claude installs a minimal `CLAUDE.md` pointer to `AGENTS.md`.
 - Configurable judge defaults are implemented under closed FAZ epic `reasond-vk96`.
 - `reasond init` installs Codex and/or Claude assets with Huh checkbox prompts and writes `.reasond/settings.json`.
+- Codex install/init no longer edits `~/.codex/config.toml` to enable hooks; it only installs repository-managed Codex assets because hooks are enabled by default upstream.
 - `reasond init` shows all supported judge provider/model choices regardless of selected install assets.
 - Huh MultiSelect needs explicit height when title/description text is present, otherwise the options viewport can collapse and hide the list.
 - `reasond init` now uses a Charm-like custom Huh theme with padding and colored title/help/checkbox styles, but without the default thick left border.

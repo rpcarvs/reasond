@@ -1,13 +1,11 @@
 package app
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
-	"github.com/rpcarvs/reasond/internal/codexconfig"
 	"github.com/rpcarvs/reasond/internal/install"
 	"github.com/rpcarvs/reasond/internal/integrity"
 	"github.com/rpcarvs/reasond/internal/judge"
@@ -18,15 +16,11 @@ import (
 
 // Bootstrap wires shared initialization, integrity, storage, and processing services for one repo.
 type Bootstrap struct {
-	RootDir            string
-	CodexConfigManager codexconfig.Manager
+	RootDir string
 }
 
 // LayoutResult mirrors the runtime layout result exposed by the runtime package.
 type LayoutResult = appRuntime.LayoutResult
-
-// CodexConfigResult mirrors the Codex global config result exposed by the codexconfig package.
-type CodexConfigResult = codexconfig.Result
 
 // DatabaseResult reports whether the runtime SQLite database already existed or was created during init.
 type DatabaseResult struct {
@@ -39,7 +33,6 @@ type InitResult struct {
 	Install  install.Result
 	Layout   appRuntime.LayoutResult
 	Database DatabaseResult
-	Codex    *codexconfig.Result
 }
 
 // InitOptions controls optional repository mutations during provider initialization.
@@ -51,9 +44,6 @@ type InitOptions struct {
 func DefaultInitOptions() InitOptions {
 	return InitOptions{ManageGitIgnore: true}
 }
-
-// ErrCodexHooksBlocked reports that local Codex init was skipped because the global feature flag is disabled.
-var ErrCodexHooksBlocked = errors.New("codex hooks are disabled in the global config")
 
 // NewBootstrap resolves the shared application root used by CLI and TUI flows.
 func NewBootstrap(rootDir string) (Bootstrap, error) {
@@ -77,18 +67,6 @@ func (b Bootstrap) InitProvider(provider assetbundle.Provider) (InitResult, erro
 // InitProviderWithOptions installs provider assets and runtime files using the shared bootstrap path.
 func (b Bootstrap) InitProviderWithOptions(provider assetbundle.Provider, options InitOptions) (InitResult, error) {
 	result := InitResult{}
-
-	if provider == assetbundle.ProviderCodex {
-		configManager := b.CodexConfigManager
-		configResult, err := configManager.EnsureHooksEnabled()
-		if err != nil {
-			return result, err
-		}
-		result.Codex = &configResult
-		if configResult.Status == codexconfig.StatusBlocked {
-			return result, ErrCodexHooksBlocked
-		}
-	}
 
 	installResult, err := (install.Installer{}).Install(b.RootDir, provider)
 	if err != nil {
