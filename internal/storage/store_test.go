@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/rpcarvs/reasond/internal/judge"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/testutil"
 
@@ -48,12 +49,11 @@ func TestOpenBootstrapsRuntimeDatabase(t *testing.T) {
 	if legacyFindingsCount != 0 {
 		t.Fatalf("expected no legacy audit_findings table in fresh schema, got %d", legacyFindingsCount)
 	}
-	for _, table := range []string{
-		"audit_runs_codex",
-		"audit_runs_claude",
-		"audit_findings_codex",
-		"audit_findings_claude",
-	} {
+	var providerTables []string
+	for _, provider := range judge.Providers() {
+		providerTables = append(providerTables, provider.RunTable, provider.FindingsTable)
+	}
+	for _, table := range providerTables {
 		var name string
 		if err := store.DB().QueryRow(
 			`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,

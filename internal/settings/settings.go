@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,65 +10,54 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/rpcarvs/reasond/internal/processing"
+	"github.com/rpcarvs/reasond/internal/judge"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 )
 
 const (
-	DefaultJudgeProvider = processing.ProviderCodex
+	DefaultJudgeProvider = judge.ProviderCodex
 	DefaultCodexModel    = "gpt-5.4-mini"
 	DefaultClaudeModel   = "claude-haiku-4-5"
 )
 
-var providerModels = map[string][]string{
-	processing.ProviderCodex: {
-		DefaultCodexModel,
-		"gpt-5.1-codex-mini",
-		"gpt-5.3-codex",
-		"gpt-5.4",
-	},
-	processing.ProviderClaude: {
-		DefaultClaudeModel,
-		"claude-sonnet-4-6",
-		"claude-opus-4-6",
-	},
-}
-
 // Settings stores repository-local reasond preferences.
 type Settings struct {
+	// DefaultJudgeProvider is the normalized provider id used by agent-facing
+	// judge commands when no provider is chosen interactively.
 	DefaultJudgeProvider string `json:"default_judge_provider"`
-	DefaultJudgeModel    string `json:"default_judge_model"`
-	GitIgnoreReasond     bool   `json:"git_ignore_reasond"`
+	// DefaultJudgeModel is the saved default model for DefaultJudgeProvider.
+	DefaultJudgeModel string `json:"default_judge_model"`
+	// GitIgnoreReasond controls whether reasond-managed runtime paths should be
+	// required in the repository .gitignore.
+	GitIgnoreReasond bool `json:"git_ignore_reasond"`
 }
 
 // Defaults returns the migration-friendly judge settings used when no settings file exists.
 func Defaults() Settings {
+	defaultModel, _ := judge.DefaultModel(DefaultJudgeProvider)
 	return Settings{
 		DefaultJudgeProvider: DefaultJudgeProvider,
-		DefaultJudgeModel:    DefaultCodexModel,
+		DefaultJudgeModel:    defaultModel,
 		GitIgnoreReasond:     true,
 	}
 }
 
-// ModelsForProvider returns supported judge model choices for a provider.
+// ModelsForProvider returns the static supported model list for a provider.
+// Dynamic providers such as Ollama return an error because their model choices
+// are discovered at runtime.
 func ModelsForProvider(provider string) ([]string, error) {
-	normalized, err := NormalizeProvider(provider)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Clone(providerModels[normalized]), nil
+	return judge.ModelsForProvider(provider)
+}
+
+// AvailableModels returns selectable models for a provider, including
+// dynamically discovered local models such as Ollama installs.
+func AvailableModels(ctx context.Context, provider string) ([]string, error) {
+	return judge.AvailableModels(ctx, provider)
 }
 
 // NormalizeProvider validates and canonicalizes a judge provider.
 func NormalizeProvider(provider string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case processing.ProviderCodex:
-		return processing.ProviderCodex, nil
-	case processing.ProviderClaude:
-		return processing.ProviderClaude, nil
-	default:
-		return "", fmt.Errorf("unsupported judge provider %q", provider)
-	}
+	return judge.NormalizeProvider(provider)
 }
 
 // Validate checks that settings reference a supported provider/model combination.
@@ -81,7 +71,22 @@ func Validate(input Settings) (Settings, error) {
 		return Settings{}, fmt.Errorf("default judge model is required")
 	}
 
-	models := providerModels[provider]
+	dynamicModels, err := judge.SupportsDynamicModels(provider)
+	if err != nil {
+		return Settings{}, err
+	}
+	if dynamicModels {
+		return Settings{
+			DefaultJudgeProvider: provider,
+			DefaultJudgeModel:    model,
+			GitIgnoreReasond:     input.GitIgnoreReasond,
+		}, nil
+	}
+
+	models, err := ModelsForProvider(provider)
+	if err != nil {
+		return Settings{}, err
+	}
 	if !slices.Contains(models, model) {
 		return Settings{}, fmt.Errorf("unsupported %s judge model %q", provider, model)
 	}
@@ -93,7 +98,8 @@ func Validate(input Settings) (Settings, error) {
 	}, nil
 }
 
-// Load reads repository-local settings or returns defaults when no file exists.
+// Load reads repository-local settings or returns migration-friendly defaults
+// when no settings file exists yet.
 func Load(rootDir string) (Settings, error) {
 	path, err := settingsPath(rootDir)
 	if err != nil {
@@ -132,7 +138,7 @@ func Load(rootDir string) (Settings, error) {
 	return Validate(merged)
 }
 
-// Save validates and writes repository-local settings.
+// Save validates and writes repository-local settings to .reasond/settings.json.
 func Save(rootDir string, input Settings) (Settings, error) {
 	validated, err := Validate(input)
 	if err != nil {

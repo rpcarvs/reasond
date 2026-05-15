@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rpcarvs/reasond/internal/app"
+	"github.com/rpcarvs/reasond/internal/judge"
 	"github.com/rpcarvs/reasond/internal/processing"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/settings"
@@ -29,6 +32,7 @@ func newOnboardCmd() *cobra.Command {
 
 func newJudgeCmd() *cobra.Command {
 	var runAll bool
+	var timeoutMinutes int
 
 	cmd := &cobra.Command{
 		Use:   "judge",
@@ -41,10 +45,11 @@ using the local default judge provider/model from .reasond/settings.json. Use
 --all only when you intentionally want to re-judge every indexed audit source.
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJudgeCommand(cmd, runAll)
+			return runJudgeCommand(cmd, runAll, timeoutMinutes)
 		},
 	}
 	cmd.Flags().BoolVar(&runAll, "all", false, "re-judge every indexed audit source instead of only pending files")
+	cmd.Flags().IntVar(&timeoutMinutes, "timeout", 15, "request timeout in minutes for judge provider calls")
 	return cmd
 }
 
@@ -135,7 +140,7 @@ func newShowCmd() *cobra.Command {
 	}
 }
 
-func runJudgeCommand(cmd *cobra.Command, runAll bool) error {
+func runJudgeCommand(cmd *cobra.Command, runAll bool, timeoutMinutes int) error {
 	store, closeStore, err := openAgentStore()
 	if err != nil {
 		return err
@@ -149,6 +154,9 @@ func runJudgeCommand(cmd *cobra.Command, runAll bool) error {
 	processor := bootstrap.NewProcessor(store)
 	config, err := settings.Load(store.RootDir())
 	if err != nil {
+		return err
+	}
+	if err := configureJudgeProcessor(processor, config.DefaultJudgeProvider, timeoutMinutes); err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
@@ -180,6 +188,27 @@ func runJudgeCommand(cmd *cobra.Command, runAll bool) error {
 	}
 
 	printJudgeSummary(out, result)
+	return nil
+}
+
+func configureJudgeProcessor(processor *processing.Processor, provider string, timeoutMinutes int) error {
+	if timeoutMinutes <= 0 {
+		return fmt.Errorf("judge timeout must be at least 1 minute")
+	}
+	if strings.TrimSpace(provider) != judge.ProviderOllama {
+		return nil
+	}
+	if processor == nil {
+		return fmt.Errorf("processor is required")
+	}
+	if processor.Runners == nil {
+		return fmt.Errorf("judge runners are not configured")
+	}
+
+	timeout := time.Duration(timeoutMinutes) * time.Minute
+	processor.Runners[judge.ProviderOllama] = judge.OllamaRunner{
+		HTTPClient: &http.Client{Timeout: timeout},
+	}
 	return nil
 }
 

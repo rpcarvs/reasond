@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/rpcarvs/reasond/internal/judge"
@@ -14,8 +13,9 @@ import (
 )
 
 const (
-	ProviderCodex  = "codex"
-	ProviderClaude = "claude"
+	ProviderOllama = judge.ProviderOllama
+	ProviderCodex  = judge.ProviderCodex
+	ProviderClaude = judge.ProviderClaude
 )
 
 const (
@@ -25,10 +25,9 @@ const (
 
 // Processor coordinates parallel judge execution with serialized persistence.
 type Processor struct {
-	Store        *storage.Store
-	CodexRunner  judge.Runner
-	ClaudeRunner judge.Runner
-	Concurrency  int
+	Store       *storage.Store
+	Runners     map[string]judge.Runner
+	Concurrency int
 
 	mu      sync.Mutex
 	running bool
@@ -206,20 +205,18 @@ func (p *Processor) processSources(
 }
 
 func (p *Processor) runnerFor(provider string) (judge.Runner, error) {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case ProviderCodex:
-		if p.CodexRunner == nil {
-			return nil, fmt.Errorf("codex runner is not configured")
-		}
-		return p.CodexRunner, nil
-	case ProviderClaude:
-		if p.ClaudeRunner == nil {
-			return nil, fmt.Errorf("claude runner is not configured")
-		}
-		return p.ClaudeRunner, nil
-	default:
-		return nil, fmt.Errorf("unsupported judge provider %q", provider)
+	normalized, err := judge.NormalizeProvider(provider)
+	if err != nil {
+		return nil, err
 	}
+	if p.Runners == nil {
+		return nil, fmt.Errorf("%s runner is not configured", normalized)
+	}
+	runner := p.Runners[normalized]
+	if runner == nil {
+		return nil, fmt.Errorf("%s runner is not configured", normalized)
+	}
+	return runner, nil
 }
 
 func (p *Processor) workerCount(total int) int {

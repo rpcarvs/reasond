@@ -101,6 +101,21 @@ func TestValidateRejectsModelForWrongProvider(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsNonEmptyOllamaModel(t *testing.T) {
+	t.Parallel()
+
+	validated, err := Validate(Settings{
+		DefaultJudgeProvider: "ollama",
+		DefaultJudgeModel:    "glm4:9b",
+	})
+	if err != nil {
+		t.Fatalf("validate ollama settings: %v", err)
+	}
+	if validated.DefaultJudgeProvider != "ollama" || validated.DefaultJudgeModel != "glm4:9b" {
+		t.Fatalf("unexpected validated ollama settings: %+v", validated)
+	}
+}
+
 func TestModelsForProviderReturnsCopy(t *testing.T) {
 	t.Parallel()
 
@@ -116,5 +131,13 @@ func TestModelsForProviderReturnsCopy(t *testing.T) {
 	}
 	if again[0] == "mutated" {
 		t.Fatalf("expected models copy")
+	}
+}
+
+func TestModelsForProviderRejectsDynamicOllamaCatalog(t *testing.T) {
+	t.Parallel()
+
+	if _, err := ModelsForProvider("ollama"); err == nil {
+		t.Fatalf("expected ollama static models query to fail")
 	}
 }

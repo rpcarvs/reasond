@@ -114,8 +114,11 @@ func (b Bootstrap) OpenStore() (*storage.Store, error) {
 // NewProcessor wires the shared judge runners for batch processing.
 func (b Bootstrap) NewProcessor(store *storage.Store) *processing.Processor {
 	return &processing.Processor{
-		Store:        store,
-		CodexRunner:  judge.CodexRunner{},
-		ClaudeRunner: judge.ClaudeRunner{},
+		Store: store,
+		Runners: map[string]judge.Runner{
+			judge.ProviderOllama: judge.OllamaRunner{},
+			judge.ProviderCodex:  judge.CodexRunner{},
+			judge.ProviderClaude: judge.ClaudeRunner{},
+		},
 	}
 }

@@ -2,13 +2,18 @@ package cmd
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
+	"github.com/rpcarvs/reasond/internal/judge"
+	"github.com/rpcarvs/reasond/internal/processing"
 	"github.com/rpcarvs/reasond/internal/settings"
 )
 
@@ -159,6 +164,57 @@ func TestOnboardPrintsAgentWorkflow(t *testing.T) {
 	}
 }
 
+func TestConfigureJudgeProcessorSetsOllamaTimeout(t *testing.T) {
+	processor := &processing.Processor{
+		Runners: map[string]judge.Runner{
+			judge.ProviderOllama: judge.OllamaRunner{},
+		},
+	}
+
+	if err := configureJudgeProcessor(processor, judge.ProviderOllama, 7); err != nil {
+		t.Fatalf("configure judge processor: %v", err)
+	}
+
+	runner, ok := processor.Runners[judge.ProviderOllama].(judge.OllamaRunner)
+	if !ok {
+		t.Fatalf("expected ollama runner, got %#v", processor.Runners[judge.ProviderOllama])
+	}
+	if runner.HTTPClient == nil {
+		t.Fatalf("expected configured http client")
+	}
+	if runner.HTTPClient.Timeout != 7*time.Minute {
+		t.Fatalf("expected timeout 7m, got %s", runner.HTTPClient.Timeout)
+	}
+}
+
+func TestConfigureJudgeProcessorRejectsNonPositiveTimeout(t *testing.T) {
+	err := configureJudgeProcessor(&processing.Processor{}, judge.ProviderOllama, 0)
+	if err == nil || !strings.Contains(err.Error(), "at least 1 minute") {
+		t.Fatalf("expected timeout validation error, got %v", err)
+	}
+}
+
+func TestConfigureJudgeProcessorLeavesNonOllamaProvidersUnchanged(t *testing.T) {
+	client := &http.Client{Timeout: time.Minute}
+	processor := &processing.Processor{
+		Runners: map[string]judge.Runner{
+			judge.ProviderCodex: judge.CodexRunner{},
+			judge.ProviderOllama: judge.OllamaRunner{
+				HTTPClient: client,
+			},
+		},
+	}
+
+	if err := configureJudgeProcessor(processor, judge.ProviderCodex, 9); err != nil {
+		t.Fatalf("configure judge processor: %v", err)
+	}
+
+	runner := processor.Runners[judge.ProviderOllama].(judge.OllamaRunner)
+	if runner.HTTPClient != client {
+		t.Fatalf("expected ollama runner to remain unchanged")
+	}
+}
+
 func TestRunInitRequestInstallsProviderAndSavesSettings(t *testing.T) {
 	root := t.TempDir()
 	initGitRepo(t, root)
@@ -223,6 +279,12 @@ func TestInitPromptLabelsAreExplicit(t *testing.T) {
 	if !strings.Contains(providerPromptDescription, "enter") {
 		t.Fatalf("provider prompt must explain confirmation key")
 	}
+	if !strings.Contains(judgeProviderPromptDescription, "default judge harness") {
+		t.Fatalf("judge provider prompt must explain harness selection")
+	}
+	if !strings.Contains(judgeModelPromptDescription, "default model") {
+		t.Fatalf("judge model prompt must explain model selection")
+	}
 	if !strings.Contains(gitIgnorePromptDescription, ".reasond/ and .reasond_tmp/") {
 		t.Fatalf("gitignore prompt must explain which entries are added")
 	}
@@ -232,61 +294,35 @@ func TestInitPromptLabelsAreExplicit(t *testing.T) {
 	if got := providerOptionLabel(assetbundle.ProviderClaude); got != "Claude Code" {
 		t.Fatalf("unexpected claude provider label %q", got)
 	}
-	choices, err := judgeChoices()
-	if err != nil {
-		t.Fatalf("build judge choices: %v", err)
+	if got := judgeProviderOptionLabel(judge.ProviderOllama); got != "Ollama(local)" {
+		t.Fatalf("unexpected ollama provider label %q", got)
 	}
-	if !hasJudgeChoice(choices, "codex", settings.DefaultCodexModel) {
-		t.Fatalf("expected codex judge choice in %+v", choices)
-	}
-	if !hasJudgeChoice(choices, "claude", settings.DefaultClaudeModel) {
-		t.Fatalf("expected claude judge choice in %+v", choices)
-	}
-	if got := judgeChoiceLabel(judgeChoice{Provider: "codex", Model: "gpt-5.4-mini"}); got != "Codex judge: gpt-5.4-mini" {
+	if got := judgeProviderOptionLabel(judge.ProviderCodex); got != "Codex" {
 		t.Fatalf("unexpected codex judge label %q", got)
 	}
-	if got := judgeChoiceLabel(judgeChoice{Provider: "claude", Model: "claude-haiku-4-5"}); got != "Claude Code judge: claude-haiku-4-5" {
+	if got := judgeProviderOptionLabel(judge.ProviderClaude); got != "Claude Code" {
 		t.Fatalf("unexpected claude judge label %q", got)
 	}
-}
-
-func TestRunInitRequestCanSkipGitIgnoreMutation(t *testing.T) {
-	root := t.TempDir()
-	initGitRepo(t, root)
-	t.Chdir(root)
-
-	disabled := false
-	var out bytes.Buffer
-	if err := runInitRequest(&out, initRequest{
-		Providers: []assetbundle.Provider{assetbundle.ProviderClaude},
-		Settings: settings.Settings{
-			DefaultJudgeProvider: "claude",
-			DefaultJudgeModel:    settings.DefaultClaudeModel,
-		},
-		GitIgnore: &disabled,
-	}); err != nil {
-		t.Fatalf("run init request: %v\n%s", err, out.String())
+	options := judgeProviderOptions()
+	if len(options) != len(judge.ProviderIDs()) {
+		t.Fatalf("expected one provider option per provider, got %d", len(options))
 	}
-
-	loaded, err := settings.Load(root)
-	if err != nil {
-		t.Fatalf("load settings: %v", err)
-	}
-	if loaded.GitIgnoreReasond {
-		t.Fatalf("expected saved gitignore preference to be false")
-	}
-	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
-		t.Fatalf("expected .gitignore to stay absent, stat err=%v", err)
-	}
-}
-
-func hasJudgeChoice(choices []judgeChoice, provider, model string) bool {
-	for _, choice := range choices {
-		if choice.Provider == provider && choice.Model == model {
-			return true
+	providerIDs := judge.ProviderIDs()
+	for index, option := range options {
+		if option.Value != providerIDs[index] {
+			t.Fatalf("unexpected provider option %d: got %q want %q", index, option.Value, providerIDs[index])
 		}
 	}
-	return false
+	if got := defaultJudgeModelSelection(judge.ProviderCodex, []string{"x", settings.DefaultCodexModel}); got != settings.DefaultCodexModel {
+		t.Fatalf("expected static default model, got %q", got)
+	}
+	if got := defaultJudgeModelSelection(judge.ProviderOllama, []string{"glm4:9b", "llama3.2"}); got != "glm4:9b" {
+		t.Fatalf("expected first ollama model as default, got %q", got)
+	}
+	modelOptions := judgeModelOptions([]string{"a", "b"})
+	if len(modelOptions) != 2 || modelOptions[0].Value != "a" || modelOptions[1].Value != "b" {
+		t.Fatalf("unexpected model options: %+v", modelOptions)
+	}
 }
 
 func TestAgentCLIJudgeUsesConfiguredClaudeDefault(t *testing.T) {
@@ -344,6 +380,52 @@ func TestAgentCLIJudgeUsesConfiguredClaudeDefault(t *testing.T) {
 		if !strings.Contains(latestOut.String(), expected) {
 			t.Fatalf("expected latest output %q in:\n%s", expected, latestOut.String())
 		}
+	}
+}
+
+func TestRunInitRequestCanSkipGitIgnoreMutation(t *testing.T) {
+	root := t.TempDir()
+	initGitRepo(t, root)
+	t.Chdir(root)
+
+	disabled := false
+	var out bytes.Buffer
+	if err := runInitRequest(&out, initRequest{
+		Providers: []assetbundle.Provider{assetbundle.ProviderClaude},
+		Settings: settings.Settings{
+			DefaultJudgeProvider: "claude",
+			DefaultJudgeModel:    settings.DefaultClaudeModel,
+		},
+		GitIgnore: &disabled,
+	}); err != nil {
+		t.Fatalf("run init request: %v\n%s", err, out.String())
+	}
+
+	loaded, err := settings.Load(root)
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if loaded.GitIgnoreReasond {
+		t.Fatalf("expected saved gitignore preference to be false")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(err) {
+		t.Fatalf("expected .gitignore to stay absent, stat err=%v", err)
+	}
+}
+
+func TestJudgeProviderOptionsFollowCanonicalOrder(t *testing.T) {
+	options := judgeProviderOptions()
+	ids := judge.ProviderIDs()
+	if len(options) != len(ids) {
+		t.Fatalf("expected %d provider options, got %d", len(ids), len(options))
+	}
+
+	values := make([]string, 0, len(options))
+	for _, option := range options {
+		values = append(values, option.Value)
+	}
+	if !slices.Equal(values, ids) {
+		t.Fatalf("unexpected provider option order: got %v want %v", values, ids)
 	}
 }
 

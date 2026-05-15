@@ -76,8 +76,10 @@ func TestProcessUnprocessedContinuesAfterPerFileFailures(t *testing.T) {
 
 	var updates []ProgressUpdate
 	processor := &Processor{
-		Store:       store,
-		CodexRunner: fakeRunner{},
+		Store: store,
+		Runners: map[string]judge.Runner{
+			ProviderCodex: fakeRunner{},
+		},
 	}
 	result, err := processor.ProcessUnprocessed(context.Background(), ProviderCodex, "gpt-5.4-mini", func(update ProgressUpdate) {
 		updates = append(updates, update)
@@ -171,8 +173,10 @@ func TestProcessUnprocessedRunsJudgeWorkConcurrently(t *testing.T) {
 
 	runner := &measuringRunner{delay: 40 * time.Millisecond}
 	processor := &Processor{
-		Store:       store,
-		CodexRunner: runner,
+		Store: store,
+		Runners: map[string]judge.Runner{
+			ProviderCodex: runner,
+		},
 		Concurrency: 3,
 	}
 
@@ -215,8 +219,10 @@ func TestProcessAllIndexedRerunsAlreadyProcessedSources(t *testing.T) {
 	}
 
 	processor := &Processor{
-		Store:       store,
-		CodexRunner: fakeRunner{},
+		Store: store,
+		Runners: map[string]judge.Runner{
+			ProviderCodex: fakeRunner{},
+		},
 	}
 	if _, err := processor.ProcessUnprocessed(context.Background(), ProviderCodex, "gpt-5.4-mini", nil); err != nil {
 		t.Fatalf("initial process unprocessed: %v", err)
@@ -294,8 +300,10 @@ func TestProcessUnprocessedRejectsOverlappingRuns(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	processor := &Processor{
-		Store:       store,
-		CodexRunner: runner,
+		Store: store,
+		Runners: map[string]judge.Runner{
+			ProviderCodex: runner,
+		},
 		Concurrency: 1,
 	}
 
@@ -369,8 +377,10 @@ func TestProcessUnprocessedStopsSchedulingNewWorkAfterCancel(t *testing.T) {
 
 	runner := &cancelAwareRunner{ready: make(chan struct{})}
 	processor := &Processor{
-		Store:       store,
-		CodexRunner: runner,
+		Store: store,
+		Runners: map[string]judge.Runner{
+			ProviderCodex: runner,
+		},
 		Concurrency: 1,
 	}
 

@@ -16,25 +16,12 @@ import (
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
 	"github.com/rpcarvs/reasond/internal/app"
 	"github.com/rpcarvs/reasond/internal/integrity"
+	"github.com/rpcarvs/reasond/internal/judge"
 	"github.com/rpcarvs/reasond/internal/processing"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/settings"
 	"github.com/rpcarvs/reasond/internal/storage"
 )
-
-var providerModels = map[string][]string{
-	processing.ProviderClaude: {
-		"claude-haiku-4-5",
-		"claude-sonnet-4-6",
-		"claude-opus-4-6",
-	},
-	processing.ProviderCodex: {
-		"gpt-5.4-mini",
-		"gpt-5.1-codex-mini",
-		"gpt-5.3-codex",
-		"gpt-5.4",
-	},
-}
 
 type phase string
 
@@ -63,6 +50,10 @@ const (
 
 const sourceScrollStep = 10
 
+var loadJudgeModels = func(provider string) ([]string, error) {
+	return settings.AvailableModels(context.Background(), provider)
+}
+
 type model struct {
 	bootstrap app.Bootstrap
 	report    integrity.Report
@@ -82,6 +73,7 @@ type model struct {
 	auditPromptDismissed bool
 	selectedProvider     string
 	selectedModel        string
+	availableModels      []string
 	processMode          processMode
 
 	initProviderIndex  int
@@ -154,9 +146,9 @@ func Run(rootDir string) error {
 		bootstrap:        bootstrap,
 		phase:            phaseBoard,
 		progress:         progress,
-		boardProvider:    processing.ProviderCodex,
-		selectedProvider: processing.ProviderCodex,
-		selectedModel:    providerModels[processing.ProviderCodex][0],
+		boardProvider:    judge.DefaultProvider(),
+		selectedProvider: judge.DefaultProvider(),
+		selectedModel:    defaultJudgeModel(judge.DefaultProvider()),
 		processMode:      processModePending,
 	}
 	if err := m.reloadState(); err != nil {
@@ -222,6 +214,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 		if msg.err != nil {
 			m.lastError = msg.err.Error()
+			m.statusLine = "Audit processing failed."
 		}
 		if m.store != nil {
 			pendingCount, err := m.store.CountUnprocessedSources()
@@ -234,6 +227,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.auditPromptDismissed = true
 		if err := m.loadBoardFindings(); err != nil {
 			m.lastError = err.Error()
+		}
+		if msg.err != nil {
+			m.phase = phaseProcessing
+			return m, nil
 		}
 		m.phase = phaseBoard
 		return m, nil
@@ -393,22 +390,24 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "i":
 		if m.phase == phaseBoard {
-			m.beginInitSession(providerSelectionIndex(m.boardProvider))
+			m.beginInitSession(initProviderSelectionIndex(m.boardProvider))
 			return m, nil
 		}
 	case "r":
 		if m.phase == phaseBoard {
 			m.processMode = processModeAll
 			m.phase = phaseProviderSelect
+			m.providerIndex = providerSelectionIndex(m.selectedProvider)
 			return m, nil
 		}
 	case "tab":
 		if m.phase == phaseBoard {
-			if m.boardProvider == processing.ProviderCodex {
-				m.boardProvider = processing.ProviderClaude
-			} else {
-				m.boardProvider = processing.ProviderCodex
+			nextProvider, err := m.nextBoardProvider(m.boardProvider)
+			if err != nil {
+				m.lastError = err.Error()
+				return m, nil
 			}
+			m.boardProvider = nextProvider
 			if err := m.loadFilterFiles(); err != nil {
 				m.lastError = err.Error()
 				return m, nil
@@ -425,6 +424,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.phase == phaseAuditPrompt {
 			m.processMode = processModePending
 			m.phase = phaseProviderSelect
+			m.providerIndex = providerSelectionIndex(m.selectedProvider)
 			return m, nil
 		}
 		if m.phase == phaseInitFollowup {
@@ -497,26 +497,31 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case phaseAuditPrompt:
 			m.processMode = processModePending
 			m.phase = phaseProviderSelect
+			m.providerIndex = providerSelectionIndex(m.selectedProvider)
 			return m, nil
 		case phaseProviderSelect:
-			providers := []string{processing.ProviderCodex, processing.ProviderClaude}
-			m.selectedProvider = providers[m.providerIndex]
-			m.modelIndex = 0
-			m.selectedModel = providerModels[m.selectedProvider][0]
-			m.phase = phaseModelSelect
-			return m, nil
+			providers := judge.ProviderIDs()
+			if len(providers) == 0 {
+				return m, nil
+			}
+			if m.providerIndex < 0 {
+				m.providerIndex = 0
+			}
+			if m.providerIndex >= len(providers) {
+				m.providerIndex = len(providers) - 1
+			}
+			return m.beginJudgeModelSelection(providers[m.providerIndex])
 		case phaseModelSelect:
-			models := providerModels[m.selectedProvider]
-			if len(models) == 0 {
+			if len(m.availableModels) == 0 {
 				return m, nil
 			}
 			if m.modelIndex < 0 {
 				m.modelIndex = 0
 			}
-			if m.modelIndex >= len(models) {
-				m.modelIndex = len(models) - 1
+			if m.modelIndex >= len(m.availableModels) {
+				m.modelIndex = len(m.availableModels) - 1
 			}
-			m.selectedModel = models[m.modelIndex]
+			m.selectedModel = m.availableModels[m.modelIndex]
 			return m.startProcessing()
 		case phaseFileFilter:
 			if m.filterIndex == 0 {
@@ -530,27 +535,28 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-	case "c":
-		if m.phase == phaseInitSelect {
-			m.initProviderIndex = 0
-			return m.startInit(assetbundle.ProviderCodex)
-		}
 	case "l":
 		switch m.phase {
 		case phaseInitSelect:
 			m.initProviderIndex = 1
 			return m.startInit(assetbundle.ProviderClaude)
 		case phaseProviderSelect:
-			m.providerIndex = 1
-			m.selectedProvider = processing.ProviderClaude
-			m.modelIndex = 0
-			m.selectedModel = providerModels[m.selectedProvider][0]
-			m.phase = phaseModelSelect
-			return m, nil
+			return m.beginJudgeModelSelection(processing.ProviderClaude)
+		}
+	case "c":
+		switch m.phase {
+		case phaseInitSelect:
+			m.initProviderIndex = 0
+			return m.startInit(assetbundle.ProviderCodex)
+		case phaseProviderSelect:
+			return m.beginJudgeModelSelection(processing.ProviderCodex)
 		}
 	case "o":
 		if m.phase == phaseDetail {
 			return m.openSourceViewer()
+		}
+		if m.phase == phaseProviderSelect {
+			return m.beginJudgeModelSelection(judge.ProviderOllama)
 		}
 	}
 
@@ -604,26 +610,29 @@ func (m model) moveSelection(step int) (tea.Model, tea.Cmd) {
 		m.initFollowupIndex = next
 		return m, nil
 	case phaseProviderSelect:
+		providers := judge.ProviderIDs()
+		if len(providers) == 0 {
+			return m, nil
+		}
 		next := m.providerIndex + step
 		if next < 0 {
 			next = 0
 		}
-		if next > 1 {
-			next = 1
+		if next >= len(providers) {
+			next = len(providers) - 1
 		}
 		m.providerIndex = next
 		return m, nil
 	case phaseModelSelect:
-		models := providerModels[m.selectedProvider]
-		if len(models) == 0 {
+		if len(m.availableModels) == 0 {
 			return m, nil
 		}
 		next := m.modelIndex + step
 		if next < 0 {
 			next = 0
 		}
-		if next >= len(models) {
-			next = len(models) - 1
+		if next >= len(m.availableModels) {
+			next = len(m.availableModels) - 1
 		}
 		m.modelIndex = next
 		return m, nil
@@ -712,18 +721,22 @@ func (m model) View() string {
 			"Enter/y yes, n no, q closes popup",
 		))
 	case phaseProviderSelect:
-		return m.overlay(base, m.renderSelectionModal("Select judge provider", []string{
-			"Codex",
-			"Claude Code",
-		}, m.providerIndex, "Enter to continue, up/down to choose, q to close"))
+		return m.overlay(base, m.renderSelectionModal(
+			"Select judge provider",
+			judgeProviderLabels(),
+			m.providerIndex,
+			"Enter to continue, up/down to choose, q to close",
+		))
 	case phaseModelSelect:
 		return m.overlay(base, m.renderSelectionModal(
 			fmt.Sprintf("Select model (%s)", strings.ToUpper(m.selectedProvider)),
-			providerModels[m.selectedProvider],
+			m.availableModels,
 			m.modelIndex,
 			"Enter to process, up/down to choose, q closes popup",
 		))
 	case phaseProcessing:
+		title := "Processing audits"
+		footer := "q closes popup"
 		progressBody := []string{
 			fmt.Sprintf("Judge: %s / %s", m.selectedProvider, m.selectedModel),
 			fmt.Sprintf("Current file: %s", fallbackText(m.currentFile, "-")),
@@ -737,7 +750,11 @@ func (m model) View() string {
 		if m.lastError != "" {
 			progressBody = append(progressBody, "Last error: "+m.lastError)
 		}
-		return m.overlay(base, m.renderMessageModal("Processing audits", progressBody, "q closes popup"))
+		if m.cancel == nil && m.lastError != "" {
+			title = "Audit processing failed"
+			footer = "Enter or q close"
+		}
+		return m.overlay(base, m.renderMessageModal(title, progressBody, footer))
 	case phaseDetail:
 		if m.detail == nil {
 			return base
@@ -789,11 +806,13 @@ func (m model) renderBoard() string {
 }
 
 func (m model) renderProviderHeader() string {
-	text := "Audits Judged by Codex"
+	text := fmt.Sprintf("Audits Judged by %s", judge.Label(m.boardProvider))
 	bg := lipgloss.Color("24")
-	if m.boardProvider == processing.ProviderClaude {
-		text = "Audits Judged by Claude"
+	switch m.boardProvider {
+	case processing.ProviderClaude:
 		bg = lipgloss.Color("166")
+	case judge.ProviderOllama:
+		bg = lipgloss.Color("62")
 	}
 
 	style := lipgloss.NewStyle().
@@ -803,6 +822,32 @@ func (m model) renderProviderHeader() string {
 		Align(lipgloss.Center).
 		Width(m.boardTableWidth())
 	return style.Render(text)
+}
+
+func (m model) beginJudgeModelSelection(provider string) (tea.Model, tea.Cmd) {
+	normalized, err := judge.NormalizeProvider(provider)
+	if err != nil {
+		m.lastError = err.Error()
+		m.phase = phaseBoard
+		return m, nil
+	}
+
+	models, err := loadJudgeModels(normalized)
+	if err != nil {
+		m.lastError = err.Error()
+		m.phase = phaseBoard
+		return m, nil
+	}
+
+	m.selectedProvider = normalized
+	m.availableModels = append([]string(nil), models...)
+	m.selectedModel = defaultJudgeModelSelection(normalized, m.availableModels)
+	m.modelIndex = 0
+	if selectedIndex := slices.Index(m.availableModels, m.selectedModel); selectedIndex >= 0 {
+		m.modelIndex = selectedIndex
+	}
+	m.phase = phaseModelSelect
+	return m, nil
 }
 
 func (m model) renderBoardTable() string {
@@ -840,7 +885,9 @@ func (m model) renderBoardTable() string {
 		Render("Score")
 
 	rows := []string{headerTitle + " " + headerScore}
-	for index, finding := range m.boardFindings {
+	start, end := m.boardViewportRange()
+	for index := start; index < end; index++ {
+		finding := m.boardFindings[index]
 		baseRowStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252")).
 			Width(titleWidth).
@@ -872,6 +919,41 @@ func (m model) renderBoardTable() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("238")).
 		Render(table)
+}
+
+func (m model) boardViewportRange() (int, int) {
+	total := len(m.boardFindings)
+	if total == 0 {
+		return 0, 0
+	}
+
+	viewport := m.boardViewportHeight()
+	if total <= viewport {
+		return 0, total
+	}
+
+	start := m.boardIndex - viewport + 1
+	if start < 0 {
+		start = 0
+	}
+	end := start + viewport
+	if end > total {
+		end = total
+		start = end - viewport
+	}
+	return start, end
+}
+
+func (m model) boardViewportHeight() int {
+	if m.height <= 0 {
+		return 12
+	}
+
+	viewport := m.height - 12
+	if viewport < 4 {
+		return 4
+	}
+	return viewport
 }
 
 func (m model) renderSummaryModal() string {
@@ -1586,13 +1668,13 @@ func (m *model) reloadState() error {
 	m.sourceLines = nil
 	m.sourceScroll = 0
 	if m.boardProvider == "" {
-		m.boardProvider = processing.ProviderCodex
+		m.boardProvider = judge.DefaultProvider()
 	}
 	if m.selectedProvider == "" {
-		m.selectedProvider = processing.ProviderCodex
+		m.selectedProvider = judge.DefaultProvider()
 	}
 	if m.selectedModel == "" {
-		m.selectedModel = providerModels[m.selectedProvider][0]
+		m.selectedModel = defaultJudgeModel(m.selectedProvider)
 	}
 
 	if report.Runtime.RuntimeDir.Status == integrity.StatusPresent {
@@ -1621,9 +1703,10 @@ func (m *model) reloadState() error {
 		} else if ok {
 			m.boardProvider = provider
 			m.selectedProvider = provider
-			models := providerModels[m.selectedProvider]
+			models := availableJudgeModels(m.selectedProvider)
 			if len(models) > 0 {
-				m.selectedModel = models[0]
+				m.availableModels = models
+				m.selectedModel = defaultJudgeModelSelection(m.selectedProvider, models)
 			}
 		}
 		if err := m.loadBoardFindings(); err != nil {
@@ -1734,10 +1817,102 @@ func otherProvider(provider assetbundle.Provider) assetbundle.Provider {
 }
 
 func providerSelectionIndex(provider string) int {
-	if provider == processing.ProviderClaude {
+	normalized, err := judge.NormalizeProvider(provider)
+	if err != nil {
+		return 0
+	}
+	for index, providerID := range judge.ProviderIDs() {
+		if providerID == normalized {
+			return index
+		}
+	}
+	return 0
+}
+
+func initProviderSelectionIndex(provider string) int {
+	normalized, err := judge.NormalizeProvider(provider)
+	if err != nil {
+		return 0
+	}
+	if normalized == judge.ProviderClaude {
 		return 1
 	}
 	return 0
+}
+
+func availableJudgeModels(provider string) []string {
+	models, err := loadJudgeModels(provider)
+	if err != nil {
+		return nil
+	}
+	return models
+}
+
+func defaultJudgeModel(provider string) string {
+	model, err := judge.DefaultModel(provider)
+	if err != nil {
+		return ""
+	}
+	return model
+}
+
+func defaultJudgeModelSelection(provider string, models []string) string {
+	if len(models) == 0 {
+		return ""
+	}
+	defaultModel := defaultJudgeModel(provider)
+	if defaultModel != "" && slices.Contains(models, defaultModel) {
+		return defaultModel
+	}
+	return models[0]
+}
+
+func judgeProviderLabels() []string {
+	labels := make([]string, 0, len(judge.ProviderIDs()))
+	for _, providerID := range judge.ProviderIDs() {
+		labels = append(labels, judge.Label(providerID))
+	}
+	return labels
+}
+
+func nextJudgeProvider(current string) string {
+	providers := judge.ProviderIDs()
+	if len(providers) == 0 {
+		return current
+	}
+	index := providerSelectionIndex(current)
+	return providers[(index+1)%len(providers)]
+}
+
+func (m model) nextBoardProvider(current string) (string, error) {
+	if m.store == nil {
+		return nextJudgeProvider(current), nil
+	}
+
+	candidates := make([]string, 0, len(judge.ProviderIDs()))
+	for _, providerID := range judge.ProviderIDs() {
+		files, err := m.store.ListResultFiles(providerID)
+		if err != nil {
+			return "", err
+		}
+		if len(files) > 0 {
+			candidates = append(candidates, providerID)
+		}
+	}
+	if len(candidates) == 0 {
+		return nextJudgeProvider(current), nil
+	}
+
+	normalized, err := judge.NormalizeProvider(current)
+	if err != nil {
+		return candidates[0], nil
+	}
+	for index, candidate := range candidates {
+		if candidate == normalized {
+			return candidates[(index+1)%len(candidates)], nil
+		}
+	}
+	return candidates[0], nil
 }
 
 func truncateLine(text string, width int) string {

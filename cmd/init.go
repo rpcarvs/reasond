@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -12,6 +14,7 @@ import (
 
 	assetbundle "github.com/rpcarvs/reasond/cmd/assets"
 	"github.com/rpcarvs/reasond/internal/app"
+	"github.com/rpcarvs/reasond/internal/judge"
 	"github.com/rpcarvs/reasond/internal/settings"
 )
 
@@ -21,16 +24,17 @@ type initRequest struct {
 	GitIgnore *bool
 }
 
-type judgeChoice struct {
-	Provider string
-	Model    string
-}
-
 const providerPromptDescription = "Checkbox list: press x or space to select Codex and/or Claude Code, then press enter to confirm."
 
-const judgePromptDescription = "Choose the default judge used by `reasond judge`. Use arrows to move and enter to confirm."
+const judgeProviderPromptDescription = "Choose the default judge harness used by `reasond judge`. Use arrows to move and enter to confirm."
+
+const judgeModelPromptDescription = "Choose the default model for the selected judge harness. Use arrows to move and enter to confirm."
 
 const gitIgnorePromptDescription = "Choose Yes to add .reasond/ and .reasond_tmp/ to the repository .gitignore."
+
+var loadJudgeModels = func(provider string) ([]string, error) {
+	return settings.AvailableModels(context.Background(), provider)
+}
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
@@ -87,19 +91,33 @@ func promptInitRequest() (initRequest, error) {
 		return initRequest{}, err
 	}
 
-	choices, err := judgeChoices()
+	selectedProvider := judge.ProviderOllama
+	if err := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Choose the default judge harness").
+				Description(judgeProviderPromptDescription).
+				Options(judgeProviderOptions()...).
+				Height(7).
+				Value(&selectedProvider),
+		),
+	).WithAccessible(initAccessibleMode()).WithTheme(initPromptTheme()).Run(); err != nil {
+		return initRequest{}, err
+	}
+
+	models, err := loadJudgeModels(selectedProvider)
 	if err != nil {
 		return initRequest{}, err
 	}
-	selected := choices[0]
+	selectedModel := defaultJudgeModelSelection(selectedProvider, models)
 	if err := huh.NewForm(
 		huh.NewGroup(
-			huh.NewSelect[judgeChoice]().
-				Title("Choose the default judge provider/model").
-				Description(judgePromptDescription).
-				Options(judgeChoiceOptions(choices)...).
+			huh.NewSelect[string]().
+				Title(fmt.Sprintf("Choose the default %s model", judgeProviderOptionLabel(selectedProvider))).
+				Description(judgeModelPromptDescription).
+				Options(judgeModelOptions(models)...).
 				Height(10).
-				Value(&selected),
+				Value(&selectedModel),
 		),
 	).WithAccessible(initAccessibleMode()).WithTheme(initPromptTheme()).Run(); err != nil {
 		return initRequest{}, err
@@ -108,8 +126,8 @@ func promptInitRequest() (initRequest, error) {
 	return initRequest{
 		Providers: providers,
 		Settings: settings.Settings{
-			DefaultJudgeProvider: selected.Provider,
-			DefaultJudgeModel:    selected.Model,
+			DefaultJudgeProvider: selectedProvider,
+			DefaultJudgeModel:    selectedModel,
 			GitIgnoreReasond:     ignoreReasond,
 		},
 		GitIgnore: &ignoreReasond,
@@ -157,34 +175,18 @@ func (r initRequest) gitIgnoreEnabled() bool {
 	return *r.GitIgnore
 }
 
-func judgeChoices() ([]judgeChoice, error) {
-	var choices []judgeChoice
-	for _, provider := range []assetbundle.Provider{assetbundle.ProviderCodex, assetbundle.ProviderClaude} {
-		normalized, err := settings.NormalizeProvider(string(provider))
-		if err != nil {
-			return nil, err
-		}
-		models, err := settings.ModelsForProvider(normalized)
-		if err != nil {
-			return nil, err
-		}
-		for _, model := range models {
-			choices = append(choices, judgeChoice{
-				Provider: normalized,
-				Model:    model,
-			})
-		}
+func judgeProviderOptions() []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(judge.ProviderIDs()))
+	for _, providerID := range judge.ProviderIDs() {
+		options = append(options, huh.NewOption(judgeProviderOptionLabel(providerID), providerID))
 	}
-	if len(choices) == 0 {
-		return nil, fmt.Errorf("at least one judge choice is required")
-	}
-	return choices, nil
+	return options
 }
 
-func judgeChoiceOptions(choices []judgeChoice) []huh.Option[judgeChoice] {
-	options := make([]huh.Option[judgeChoice], 0, len(choices))
-	for _, choice := range choices {
-		options = append(options, huh.NewOption(judgeChoiceLabel(choice), choice))
+func judgeModelOptions(models []string) []huh.Option[string] {
+	options := make([]huh.Option[string], 0, len(models))
+	for _, model := range models {
+		options = append(options, huh.NewOption(model, model))
 	}
 	return options
 }
@@ -197,22 +199,22 @@ func providerOptions(selected []assetbundle.Provider) []huh.Option[assetbundle.P
 }
 
 func providerOptionLabel(provider assetbundle.Provider) string {
-	return providerLabel(string(provider))
+	return judge.Label(string(provider))
 }
 
-func judgeChoiceLabel(choice judgeChoice) string {
-	return fmt.Sprintf("%s judge: %s", providerLabel(choice.Provider), choice.Model)
+func judgeProviderOptionLabel(provider string) string {
+	return judge.Label(provider)
 }
 
-func providerLabel(provider string) string {
-	switch provider {
-	case "codex":
-		return "Codex"
-	case "claude":
-		return "Claude Code"
-	default:
-		return provider
+func defaultJudgeModelSelection(provider string, models []string) string {
+	if len(models) == 0 {
+		return ""
 	}
+	defaultModel, err := judge.DefaultModel(provider)
+	if err == nil && defaultModel != "" && slices.Contains(models, defaultModel) {
+		return defaultModel
+	}
+	return models[0]
 }
 
 func providerSelected(selected []assetbundle.Provider, provider assetbundle.Provider) bool {

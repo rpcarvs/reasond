@@ -1,14 +1,17 @@
 # reasond
 
-`reasond` is a local-first reasoning audit viewer for coding-agent sessions.
-It installs repository-local audit hooks for Codex and Claude Code, indexes the generated markdown audit files, runs judge models against them, and exposes the results in a TUI.
-It also exposes a small CLI for coding agents to inspect judge feedback during debugging and code review work.
+`reasond` is a local-first reasoning audit archive, judge, and review tool for
+coding-agent sessions. It installs repository-local assets for supported agent
+tools, archives reasoning audits as markdown, runs configurable judge models
+against those audits, and exposes the results through both a TUI and a small
+agent-facing CLI.
 
 ## Why reasond
 
 - Local repository auditing for coding-agent reasoning traces
-- TUI-first workflow for installation, processing, and review
-- Dual-provider judging with separate Codex and Claude result boards
+- Human setup plus agent-consumable judge feedback in the same repository
+- TUI and CLI workflows for installation, processing, and review
+- Three judge providers: Ollama, Codex, and Claude Code
 - No extra APIs usage or access tokens, just use your already installed Codex or Claude Code.
 - Defaults to the cheapest models (Haiku, GPT-Mini, etc.). They work great for this task.
 - Immutable archived-audit indexing with SQLite-backed findings
@@ -27,17 +30,22 @@ go install github.com/rpcarvs/reasond@latest
 # Check the installed version:
 reasond -v
 
-# Run inside the repository you want to audit:
+# Initialize inside the repository you want to audit:
 cd /path/to/repo
 reasond init
+
+# Open the TUI:
 reasond
 ```
 
-Inside the TUI:
+Typical human workflow:
 
-- Press `i` to install or reinstall Codex or Claude assets for the current repository.
-- If `.reasond/reasond_audits/` contains new archived markdown audits, `reasond` prompts to process them.
-- Use the board to inspect findings, switch providers, and review source files.
+1. Run `reasond init` or press `i` inside the TUI to install Codex and/or
+   Claude Code assets and choose the default judge.
+2. Run coding-agent sessions in the repository so audits are archived under
+   `.reasond/reasond_audits/`.
+3. Return to `reasond` to process new audits, inspect findings, switch judge
+   providers, and review source markdown.
 
 If `reasond` is not found after install, add `$(go env GOPATH)/bin` to your `PATH`.
 ```bash
@@ -68,7 +76,18 @@ reasond show codex:12
 `reasond init` installs Codex and/or Claude Code assets and writes the local
 default judge provider/model to `.reasond/settings.json`. `reasond judge` uses
 that local default. `reasond judge --all` re-judges every indexed audit source
-and is usually not needed.
+and is usually not needed. `reasond judge --timeout <minutes>` overrides the
+Ollama request timeout for one batch run and defaults to 15 minutes.
+All CLI and TUI flows resolve the Git repository root before reading or writing
+`.reasond` state, so running from a subdirectory still uses the same
+repository-local data.
+
+Typical agent workflow:
+
+1. Use `reasond onboard` to print the local repository workflow reminder.
+2. Run `reasond judge` when new archived audits need to be judged.
+3. Inspect the latest results with `reasond latest`, `reasond list`, or
+   `reasond show <provider:id>`.
 
 The compact result commands print provider-qualified IDs such as `codex:12` or
 `claude:7`. Detail output includes the full archived markdown path under
@@ -89,6 +108,7 @@ Required for normal repository use:
 
 Provider-specific CLIs:
 
+- `ollama` if you want to use local Ollama models as judge providers
 - `codex` if you install or run the Codex integration
 - `claude` if you install or run the Claude Code integration
 
@@ -103,7 +123,9 @@ Provider-specific CLIs:
 - `.reasond_tmp/`
 - `.gitignore` entries for `.reasond/` and `.reasond_tmp/`
 
-Install is merge-safe and idempotent and both Codex and Claude assets can coexist in the same repository.
+Install is merge-safe and idempotent. Codex and Claude assets can coexist in
+the same repository, and Ollama can be selected as the judge provider without
+installing an additional repository asset bundle.
 
 ## Runtime layout
 
@@ -118,25 +140,67 @@ Install is merge-safe and idempotent and both Codex and Claude assets can coexis
 - `.reasond_tmp/`
   Transient staging area where agents write new markdown before the stop hook archives it.
 
-The TUI board defaults to the most recently used provider and shows the latest run per source file for that provider. `a` toggles between latest-only and all runs. Raw judge output is not persisted; `reasond` stores only normalized findings.
+The TUI board defaults to the most recently used provider and shows the latest
+run per source file for that provider. `a` toggles between latest-only and all
+runs. Long finding lists scroll inside the board instead of rendering as one
+unbounded page. Raw judge output is not persisted; `reasond` stores only
+normalized findings.
 
 ## Judge providers
 
-`reasond` currently supports two headless judge runners:
+`reasond` currently supports three judge providers:
 
+- Ollama (local)
 - Codex
 - Claude Code
 
 The TUI lets the user choose the judge provider and model independently of the provider that originally generated the archived audit markdown.
 
-## Keybindings
+### Ollama
+
+Ollama is a local judge provider. `reasond` does not install Ollama or pull
+models for you. Install Ollama separately, pull at least one local model, and
+make sure the selected model fits your available RAM or VRAM.
+
+Useful commands before choosing Ollama in `reasond init` or the TUI:
+
+```bash
+ollama list
+ollama pull glm4:9b
+```
+
+Operational notes for Ollama judging:
+
+- `reasond` sends one independent `/api/chat` request per audit file.
+- Current Ollama judge requests use `OLLAMA_CONTEXT_LENGTH` when that
+  environment variable is set. Otherwise reasond falls back to `num_ctx=8192`.
+- `OLLAMA_KEEP_ALIVE` controls how long the loaded model stays resident in
+  memory. Ollama defaults to 5 minutes globally, but `reasond` sends
+  `keep_alive=10m` on judge requests when no override is set.
+- `OLLAMA_NUM_PARALLEL` is an Ollama server setting, not a `reasond` setting.
+  If your machine can support it, `OLLAMA_NUM_PARALLEL=2` is a practical tuning
+  value for medium local models and allows two same-model requests to run at
+  once.
+- Larger `num_ctx` values and higher `OLLAMA_NUM_PARALLEL` values increase
+  memory usage. If judging becomes unstable, reduce parallelism first or choose
+  a smaller model.
+
+Example Ollama server tuning:
+
+```bash
+export OLLAMA_NUM_PARALLEL=2
+export OLLAMA_KEEP_ALIVE=10m
+ollama serve
+```
+
+## TUI Keybindings
 
 - `up/down` or `j/k` move through findings
 - `enter` open the finding detail modal
-- `tab` switch between Codex and Claude boards
+- `tab` switch between provider boards
 - `a` toggle latest-only versus all runs
 - `f` filter the board by source file
-- `r` re-run all indexed files through a selected judge provider/model
+- `r` choose a judge provider/model and re-run all indexed files
 - `i` install or reinstall provider assets for the current repository
 - `s` open the state popup
 - `q` close the active popup, or quit from the board

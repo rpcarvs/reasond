@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/rpcarvs/reasond/internal/app"
 	"github.com/rpcarvs/reasond/internal/install"
 	"github.com/rpcarvs/reasond/internal/integrity"
+	"github.com/rpcarvs/reasond/internal/judge"
 	"github.com/rpcarvs/reasond/internal/processing"
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
 	"github.com/rpcarvs/reasond/internal/settings"
@@ -224,6 +227,133 @@ func TestBoardInstallKeyOpensInitSelection(t *testing.T) {
 	}
 	if next.initGitIgnoreIndex != 0 || !next.initGitIgnore {
 		t.Fatalf("expected gitignore prompt to default to Yes")
+	}
+}
+
+func TestBeginJudgeModelSelectionLoadsOllamaModels(t *testing.T) {
+	originalLoader := loadJudgeModels
+	loadJudgeModels = func(provider string) ([]string, error) {
+		if provider != judge.ProviderOllama {
+			t.Fatalf("unexpected provider %q", provider)
+		}
+		return []string{"glm4:9b", "qwen3:8b"}, nil
+	}
+	t.Cleanup(func() {
+		loadJudgeModels = originalLoader
+	})
+
+	nextModel, _ := (model{phase: phaseProviderSelect}).beginJudgeModelSelection(judge.ProviderOllama)
+	next := nextModel.(model)
+
+	if next.phase != phaseModelSelect {
+		t.Fatalf("expected model selection phase, got %s", next.phase)
+	}
+	if next.selectedProvider != judge.ProviderOllama {
+		t.Fatalf("expected ollama provider, got %s", next.selectedProvider)
+	}
+	if next.selectedModel != "glm4:9b" {
+		t.Fatalf("expected first ollama model selected, got %q", next.selectedModel)
+	}
+	if len(next.availableModels) != 2 || next.availableModels[1] != "qwen3:8b" {
+		t.Fatalf("unexpected available models: %v", next.availableModels)
+	}
+}
+
+func TestProviderSelectionIndexIncludesOllama(t *testing.T) {
+	t.Parallel()
+
+	if providerSelectionIndex(judge.ProviderOllama) != 0 {
+		t.Fatalf("expected ollama to be first provider option")
+	}
+}
+
+func TestBoardViewportRangeKeepsSelectedFindingVisible(t *testing.T) {
+	t.Parallel()
+
+	findings := make([]storage.FindingSummary, 12)
+	for i := range findings {
+		findings[i] = storage.FindingSummary{
+			ID:    int64(i + 1),
+			Title: "Finding " + strconv.Itoa(i),
+			Score: 0.5,
+		}
+	}
+
+	m := model{
+		height:        16,
+		boardFindings: findings,
+		boardIndex:    9,
+	}
+
+	start, end := m.boardViewportRange()
+	if start != 6 || end != 10 {
+		t.Fatalf("expected viewport [2,10), got [%d,%d)", start, end)
+	}
+}
+
+func TestRenderBoardTableScrollsLargeFindingLists(t *testing.T) {
+	t.Parallel()
+
+	findings := make([]storage.FindingSummary, 12)
+	for i := range findings {
+		findings[i] = storage.FindingSummary{
+			ID:    int64(i + 1),
+			Title: "Finding " + strconv.Itoa(i),
+			Score: 0.5,
+		}
+	}
+
+	m := model{
+		width:         90,
+		height:        16,
+		boardFindings: findings,
+		boardIndex:    9,
+	}
+
+	rendered := m.renderBoardTable()
+	if !strings.Contains(rendered, "Finding 9") {
+		t.Fatalf("expected selected finding to be visible:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Finding 0") || strings.Contains(rendered, "Finding 1") {
+		t.Fatalf("expected early findings to scroll out of view:\n%s", rendered)
+	}
+}
+
+func TestDoneMsgErrorKeepsFailureModalVisible(t *testing.T) {
+	t.Parallel()
+
+	m := model{
+		phase:            phaseProcessing,
+		selectedProvider: judge.ProviderOllama,
+		selectedModel:    "glm4:9b",
+		total:            3,
+		statusLine:       "Starting audit processing...",
+	}
+
+	nextModel, _ := m.Update(doneMsg{
+		err: errors.New("ollama timeout while loading model"),
+	})
+	next := nextModel.(model)
+
+	if next.phase != phaseProcessing {
+		t.Fatalf("expected processing phase to remain visible on error, got %s", next.phase)
+	}
+	if next.cancel != nil {
+		t.Fatalf("expected cancel to be cleared after failure")
+	}
+	if next.statusLine != "Audit processing failed." {
+		t.Fatalf("unexpected status line %q", next.statusLine)
+	}
+	if next.lastError != "ollama timeout while loading model" {
+		t.Fatalf("unexpected last error %q", next.lastError)
+	}
+
+	view := next.View()
+	if !strings.Contains(view, "Audit processing failed") {
+		t.Fatalf("expected failure modal title in view:\n%s", view)
+	}
+	if !strings.Contains(view, "Enter or q close") {
+		t.Fatalf("expected explicit failure dismissal hint in view:\n%s", view)
 	}
 }
 

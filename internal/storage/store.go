@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rpcarvs/reasond/internal/judge"
 	_ "modernc.org/sqlite"
 
 	appRuntime "github.com/rpcarvs/reasond/internal/runtime"
@@ -20,8 +21,9 @@ import (
 const schemaVersion = 4
 
 const (
-	JudgeProviderCodex  = "codex"
-	JudgeProviderClaude = "claude"
+	JudgeProviderOllama = judge.ProviderOllama
+	JudgeProviderCodex  = judge.ProviderCodex
+	JudgeProviderClaude = judge.ProviderClaude
 )
 
 const (
@@ -703,7 +705,7 @@ func (s *Store) ListLatestBatchFindings() ([]AgentFindingSummary, error) {
 // ListAllAgentFindings returns compact rows for all persisted judge findings.
 func (s *Store) ListAllAgentFindings() ([]AgentFindingSummary, error) {
 	var all []AgentFindingSummary
-	for _, provider := range []string{JudgeProviderCodex, JudgeProviderClaude} {
+	for _, provider := range judge.ProviderIDs() {
 		findings, err := s.listAgentFindingsForProvider(provider, "", nil)
 		if err != nil {
 			return nil, err
@@ -883,63 +885,8 @@ func (s *Store) bootstrap() error {
 			updated_at TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_audit_judge_batches_completed ON audit_judge_batches(completed_at, id);`,
-		`CREATE TABLE IF NOT EXISTS audit_runs_codex (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			source_id INTEGER NOT NULL,
-			judge_model TEXT NOT NULL,
-			batch_id INTEGER,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE,
-			FOREIGN KEY(batch_id) REFERENCES audit_judge_batches(id) ON DELETE SET NULL
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_runs_codex_batch_id ON audit_runs_codex(batch_id, id);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_runs_codex_source_id ON audit_runs_codex(source_id, id);`,
-		`CREATE TABLE IF NOT EXISTS audit_runs_claude (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			source_id INTEGER NOT NULL,
-			judge_model TEXT NOT NULL,
-			batch_id INTEGER,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE,
-			FOREIGN KEY(batch_id) REFERENCES audit_judge_batches(id) ON DELETE SET NULL
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_runs_claude_batch_id ON audit_runs_claude(batch_id, id);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_runs_claude_source_id ON audit_runs_claude(source_id, id);`,
-		`CREATE TABLE IF NOT EXISTS audit_findings_codex (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			run_id INTEGER NOT NULL,
-			source_id INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			issue TEXT NOT NULL,
-			why_text TEXT NOT NULL,
-			how_text TEXT NOT NULL,
-			score REAL NOT NULL CHECK (score >= 0.0 AND score <= 1.0),
-			judge_model TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(run_id) REFERENCES audit_runs_codex(id) ON DELETE CASCADE,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_findings_codex_run_id ON audit_findings_codex(run_id, id);`,
-		`CREATE TABLE IF NOT EXISTS audit_findings_claude (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			run_id INTEGER NOT NULL,
-			source_id INTEGER NOT NULL,
-			title TEXT NOT NULL,
-			issue TEXT NOT NULL,
-			why_text TEXT NOT NULL,
-			how_text TEXT NOT NULL,
-			score REAL NOT NULL CHECK (score >= 0.0 AND score <= 1.0),
-			judge_model TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY(run_id) REFERENCES audit_runs_claude(id) ON DELETE CASCADE,
-			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
-		);`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_findings_claude_run_id ON audit_findings_claude(run_id, id);`,
 	}
+	statements = append(statements, providerSchemaStatements()...)
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -1147,9 +1094,9 @@ func migrateLegacyFindings(tx *sql.Tx) error {
 }
 
 func migrateBatchTracking(tx *sql.Tx) error {
-	tables := []string{
-		"audit_runs_codex",
-		"audit_runs_claude",
+	tables := make([]string, 0, len(judge.ProviderIDs()))
+	for _, provider := range judge.Providers() {
+		tables = append(tables, provider.RunTable)
 	}
 
 	for _, table := range tables {
@@ -1165,6 +1112,43 @@ func migrateBatchTracking(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+func providerSchemaStatements() []string {
+	statements := make([]string, 0, len(judge.ProviderIDs())*4)
+	for _, provider := range judge.Providers() {
+		statements = append(statements,
+			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_id INTEGER NOT NULL,
+			judge_model TEXT NOT NULL,
+			batch_id INTEGER,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE,
+			FOREIGN KEY(batch_id) REFERENCES audit_judge_batches(id) ON DELETE SET NULL
+		);`, provider.RunTable),
+			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_batch_id ON %s(batch_id, id);`, provider.RunTable, provider.RunTable),
+			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_source_id ON %s(source_id, id);`, provider.RunTable, provider.RunTable),
+			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id INTEGER NOT NULL,
+			source_id INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			issue TEXT NOT NULL,
+			why_text TEXT NOT NULL,
+			how_text TEXT NOT NULL,
+			score REAL NOT NULL CHECK (score >= 0.0 AND score <= 1.0),
+			judge_model TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(run_id) REFERENCES %s(id) ON DELETE CASCADE,
+			FOREIGN KEY(source_id) REFERENCES audit_sources(id) ON DELETE CASCADE
+		);`, provider.FindingsTable, provider.RunTable),
+			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_run_id ON %s(run_id, id);`, provider.FindingsTable, provider.FindingsTable),
+		)
+	}
+	return statements
 }
 
 func columnExists(tx *sql.Tx, tableName string, columnName string) (bool, error) {
@@ -1226,14 +1210,11 @@ func tableExists(tx *sql.Tx, tableName string) (bool, error) {
 }
 
 func providerTables(provider string) (runTable string, findingsTable string, normalized string, err error) {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "", JudgeProviderCodex:
-		return "audit_runs_codex", "audit_findings_codex", JudgeProviderCodex, nil
-	case JudgeProviderClaude:
-		return "audit_runs_claude", "audit_findings_claude", JudgeProviderClaude, nil
-	default:
-		return "", "", "", fmt.Errorf("unsupported judge provider %q", provider)
+	definition, err := judge.Definition(provider)
+	if err != nil {
+		return "", "", "", err
 	}
+	return definition.RunTable, definition.FindingsTable, definition.ID, nil
 }
 
 // FormatFindingPublicID returns the provider-qualified id used by agent-facing CLI commands.
@@ -1265,8 +1246,8 @@ func ParseFindingPublicID(value string) (FindingPublicID, error) {
 }
 
 func (s *Store) mostRecentProvider(visibleOnly bool) (string, bool, error) {
-	candidates := make([]providerRecency, 0, 2)
-	for _, provider := range []string{JudgeProviderCodex, JudgeProviderClaude} {
+	candidates := make([]providerRecency, 0, len(judge.ProviderIDs()))
+	for _, provider := range judge.ProviderIDs() {
 		candidate, ok, err := s.providerRecency(provider, visibleOnly)
 		if err != nil {
 			return "", false, err
